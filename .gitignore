@@ -14,6 +14,12 @@ venv/
 /CLAUDE.md
 /PROCESS.md
 /docs/internal/
+# Local memory design notes and working docs
+modules/memory/docs/
+modules/memory/Devlope_PROCESS.md
+modules/memory/Module_Arc.md
+modules/memory/PROCESS.md
+modules/memory/README.md
 
 # Local secrets
 .env
