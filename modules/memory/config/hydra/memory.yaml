@@ -54,6 +54,9 @@
     uri: ${oc.env:NEO4J_URI,""}
     user: ${oc.env:NEO4J_USER,""}
     password: ${oc.env:NEO4J_PASSWORD,""}
+    database: ${oc.env:NEO4J_DATABASE,"neo4j"}
+    strict_tenant_mode: ${oc.env:MEMORY_GRAPH_STRICT_TENANT_MODE,"false"}
+    enable_legacy_memory_node: ${oc.env:MEMORY_GRAPH_ENABLE_LEGACY_MEMORY_NODE,"true"}
 
   decider:
     enabled: true

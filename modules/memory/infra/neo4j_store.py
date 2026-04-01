@@ -40,10 +40,25 @@ class Neo4jStore:
     当前为占位实现。
     """
 
+    @staticmethod
+    def _as_bool(val: Any, default: bool) -> bool:
+        if isinstance(val, bool):
+            return val
+        if val is None:
+            return bool(default)
+        s = str(val).strip().lower()
+        if s in {"1", "true", "yes", "on"}:
+            return True
+        if s in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
     def __init__(self, settings: Dict[str, Any] | None = None) -> None:
         self.settings = settings or {}
         self._driver = None
         self._database = str(self.settings.get("database", "neo4j"))
+        self._strict_tenant_mode = self._as_bool(self.settings.get("strict_tenant_mode"), False)
+        self._enable_legacy_memory_node = self._as_bool(self.settings.get("enable_legacy_memory_node"), True)
         self._closed: bool = False
         # reliability/circuit-breaker
         rel = (self.settings.get("reliability") or {}) if isinstance(self.settings.get("reliability"), dict) else {}
@@ -92,6 +107,91 @@ class Neo4jStore:
         except Exception:
             # keep unconfigured state
             self._driver = None
+
+    def _validate_tenant_context(self, tenant_id: Optional[str], operation: str) -> str:
+        tid = str(tenant_id or "").strip()
+        if not tid:
+            raise ValueError(
+                f"tenant_id is required for {operation}. Cross-tenant operations are forbidden."
+            )
+        return tid
+
+    def _require_legacy_memory_node_enabled(self, operation: str) -> None:
+        if self._enable_legacy_memory_node:
+            return
+        raise RuntimeError(
+            f"legacy_memory_node_disabled: operation={operation} is blocked by graph_store.enable_legacy_memory_node=false"
+        )
+
+    @staticmethod
+    def _collect_tenant_values(items: Iterable[Dict[str, Any]]) -> List[str]:
+        vals: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get("tenant_id") or "").strip()
+            if tid:
+                vals.add(tid)
+        return sorted(vals)
+
+    def _assert_payload_tenant(self, *, payload: Iterable[Dict[str, Any]], tenant_id: str, operation: str) -> None:
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            item_tid = str(item.get("tenant_id") or "").strip()
+            if item_tid != tenant_id:
+                raise ValueError(
+                    f"{operation} tenant_id mismatch: expected={tenant_id} got={item_tid or '<empty>'}"
+                )
+
+    @staticmethod
+    def _extract_applied_count(result: Any) -> Optional[int]:
+        """Best-effort extraction for `RETURN count(*) AS applied` rows.
+
+        Some tests use lightweight stubs that return plain lists without row data.
+        In that case, return None so callers can skip false-positive validation failures.
+        """
+        row: Any = None
+        try:
+            if hasattr(result, "single"):
+                row = result.single()
+            elif isinstance(result, list):
+                row = result[0] if result else None
+            elif isinstance(result, dict):
+                row = result
+        except Exception:
+            row = None
+
+        if row is None:
+            return None
+        try:
+            if isinstance(row, dict):
+                if "applied" not in row:
+                    return None
+                return int(row.get("applied", 0) or 0)
+            if hasattr(row, "get"):
+                v = row.get("applied")  # type: ignore[attr-defined]
+                if v is None:
+                    return None
+                return int(v or 0)
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _infer_entry_tenant(entries: List[MemoryEntry]) -> Optional[str]:
+        vals: set[str] = set()
+        for e in entries or []:
+            try:
+                md = dict(e.metadata or {})
+            except Exception:
+                md = {}
+            tid = str(md.get("tenant_id") or "").strip()
+            if tid:
+                vals.add(tid)
+        if len(vals) == 1:
+            return next(iter(vals))
+        return None
 
     def ensure_schema_v0(self) -> None:
         """Create minimal constraints/indexes for Graph API v0 (TKG schema baseline).
@@ -355,6 +455,54 @@ class Neo4jStore:
                 peq_dicts.append(_sanitize_props(peq))
         edge_dicts = [_dump_and_sanitize(e) for e in edges]
 
+        payload_has_items = any(
+            [
+                bool(seg_dicts),
+                bool(evid_dicts),
+                bool(utt_dicts),
+                bool(ent_dicts),
+                bool(evt_dicts),
+                bool(plc_dicts),
+                bool(ts_dicts),
+                bool(region_dicts),
+                bool(state_dicts),
+                bool(knowledge_dicts),
+                bool(peq_dicts),
+                bool(edge_dicts),
+            ]
+        )
+        tenant_values = self._collect_tenant_values(
+            seg_dicts
+            + evid_dicts
+            + utt_dicts
+            + ent_dicts
+            + evt_dicts
+            + plc_dicts
+            + ts_dicts
+            + region_dicts
+            + state_dicts
+            + knowledge_dicts
+            + peq_dicts
+            + edge_dicts
+        )
+        if len(tenant_values) > 1:
+            raise ValueError(f"upsert_graph_v0 mixed tenant_id payload is forbidden: {tenant_values}")
+        expected_tenant = tenant_values[0] if tenant_values else ""
+        if self._strict_tenant_mode and payload_has_items:
+            expected_tenant = self._validate_tenant_context(expected_tenant, "upsert_graph_v0")
+            self._assert_payload_tenant(payload=seg_dicts, tenant_id=expected_tenant, operation="segments")
+            self._assert_payload_tenant(payload=evid_dicts, tenant_id=expected_tenant, operation="evidences")
+            self._assert_payload_tenant(payload=utt_dicts, tenant_id=expected_tenant, operation="utterances")
+            self._assert_payload_tenant(payload=ent_dicts, tenant_id=expected_tenant, operation="entities")
+            self._assert_payload_tenant(payload=evt_dicts, tenant_id=expected_tenant, operation="events")
+            self._assert_payload_tenant(payload=plc_dicts, tenant_id=expected_tenant, operation="places")
+            self._assert_payload_tenant(payload=ts_dicts, tenant_id=expected_tenant, operation="time_slices")
+            self._assert_payload_tenant(payload=region_dicts, tenant_id=expected_tenant, operation="regions")
+            self._assert_payload_tenant(payload=state_dicts, tenant_id=expected_tenant, operation="states")
+            self._assert_payload_tenant(payload=knowledge_dicts, tenant_id=expected_tenant, operation="knowledge")
+            self._assert_payload_tenant(payload=peq_dicts, tenant_id=expected_tenant, operation="pending_equivs")
+            self._assert_payload_tenant(payload=edge_dicts, tenant_id=expected_tenant, operation="edges")
+
         try:
             with self._driver.session(database=self._database) as sess:  # type: ignore[attr-defined]
                 # Nodes
@@ -480,8 +628,8 @@ class Neo4jStore:
                             self._logger.info(f"Upserting edges: rel={rel}, src={src_label}, dst={dst_label}, count={len(edge_group)}")
                             cypher = (
                                 "UNWIND $edges AS e "
-                                f"MERGE (s:{src_label} {{id: e.src_id, tenant_id: e.tenant_id}}) "
-                                f"MERGE (d:{dst_label} {{id: e.dst_id, tenant_id: e.tenant_id}}) "
+                                f"MATCH (s:{src_label} {{id: e.src_id, tenant_id: e.tenant_id}}) "
+                                f"MATCH (d:{dst_label} {{id: e.dst_id, tenant_id: e.tenant_id}}) "
                                 f"MERGE (s)-[r:{rel}]->(d) "
                                 "SET r.tenant_id = e.tenant_id "
                                 "SET r.confidence = coalesce(e.confidence, r.confidence) "
@@ -497,8 +645,14 @@ class Neo4jStore:
                                 "SET r.time_origin = coalesce(e.time_origin, r.time_origin) "
                                 "SET r.ttl = coalesce(e.ttl, r.ttl) "
                                 "SET r.importance = coalesce(e.importance, r.importance) "
+                                "RETURN count(r) AS applied "
                             )
-                            sess.run(cypher, edges=edge_group)
+                            _res = sess.run(cypher, edges=edge_group)
+                            applied = self._extract_applied_count(_res)
+                            if applied is not None and applied != len(edge_group):
+                                raise RuntimeError(
+                                    f"neo4j_edge_tenant_violation: rel={rel} src={src_label} dst={dst_label} expected={len(edge_group)} applied={applied}"
+                                )
 
             self._cb_fail_count = 0
         except Exception as e:
@@ -4219,12 +4373,24 @@ RETURN count(ev) AS deleted
                 exc_info=True,
             )
             return {"updated": 0}
-    async def merge_nodes_edges(self, entries: List[MemoryEntry], edges: Optional[List[Edge]] = None) -> None:
+    async def merge_nodes_edges(
+        self,
+        entries: List[MemoryEntry],
+        edges: Optional[List[Edge]] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         import time as _t
         if self._cb_open_until and _t.time() < self._cb_open_until:
             return None
         if not self._driver:
             return None
+        self._require_legacy_memory_node_enabled("merge_nodes_edges")
+
+        effective_tenant = str(tenant_id or "").strip() or str(self._infer_entry_tenant(entries) or "").strip()
+        if self._strict_tenant_mode:
+            effective_tenant = self._validate_tenant_context(effective_tenant, "merge_nodes_edges")
+
         def _label_for(e: MemoryEntry) -> str:
             if e.kind == "episodic":
                 return "Episodic"
@@ -4239,7 +4405,7 @@ RETURN count(ev) AS deleted
             return "Node"
 
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 did_work = False
                 # Merge nodes
                 for e in entries:
@@ -4249,44 +4415,100 @@ RETURN count(ev) AS deleted
                     label = _label_for(e)
                     text = e.contents[0] if e.contents else None
                     md = dict(e.metadata)
+                    md_tenant = str(md.get("tenant_id") or "").strip()
+                    if effective_tenant:
+                        if md_tenant and md_tenant != effective_tenant:
+                            raise ValueError(
+                                f"merge_nodes_edges entry tenant mismatch: expected={effective_tenant} got={md_tenant}"
+                            )
+                        if not md_tenant:
+                            md["tenant_id"] = effective_tenant
+                            e.metadata = md
+                            md_tenant = effective_tenant
+                    if self._strict_tenant_mode and not md_tenant:
+                        raise ValueError("merge_nodes_edges strict_tenant_mode requires entry.metadata.tenant_id")
                     # Merge MemoryEntry projection node (separate from typed TKG graph :Entity label).
-                    sess.run(
-                        f"MERGE (n:{MEMORY_NODE_LABEL} {{id: $id}}) SET n.kind=$kind, n.modality=$modality, n.text=$text, n.source=$source, n.timestamp=$ts, n.clip_id=$clip, "
-                        "n.tenant_id=CASE WHEN n.tenant_id IS NULL THEN $tenant ELSE n.tenant_id END, "
-                        "n.memory_domain=$domain, n.run_id=$run, n.user_id=$uids, n.memory_scope=$scope "
-                        # label backfill for node
-                        "FOREACH (_ IN CASE WHEN $kind = 'episodic' THEN [1] ELSE [] END | SET n:Episodic) "
-                        "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'image' THEN [1] ELSE [] END | SET n:Image) "
-                        "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'audio' THEN [1] ELSE [] END | SET n:Voice) "
-                        "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'structured' THEN [1] ELSE [] END | SET n:Structured) "
-                        "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND NOT $modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET n:Semantic) ",
-                        id=e.id,
-                        kind=e.kind,
-                        modality=e.modality,
-                        text=text,
-                        source=md.get("source"),
-                        ts=md.get("timestamp"),
-                        clip=md.get("clip_id"),
-                        tenant=md.get("tenant_id"),
-                        domain=md.get("memory_domain"),
-                        run=md.get("run_id"),
-                        uids=md.get("user_id"),
-                        scope=md.get("memory_scope"),
-                    )
+                    if effective_tenant:
+                        sess.run(
+                            f"MERGE (n:{MEMORY_NODE_LABEL} {{id: $id, tenant_id: $tenant}}) "
+                            "SET n.kind=$kind, n.modality=$modality, n.text=$text, n.source=$source, n.timestamp=$ts, n.clip_id=$clip, "
+                            "n.tenant_id=$tenant, n.memory_domain=$domain, n.run_id=$run, n.user_id=$uids, n.memory_scope=$scope "
+                            # label backfill for node
+                            "FOREACH (_ IN CASE WHEN $kind = 'episodic' THEN [1] ELSE [] END | SET n:Episodic) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'image' THEN [1] ELSE [] END | SET n:Image) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'audio' THEN [1] ELSE [] END | SET n:Voice) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'structured' THEN [1] ELSE [] END | SET n:Structured) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND NOT $modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET n:Semantic) ",
+                            id=e.id,
+                            tenant=effective_tenant,
+                            kind=e.kind,
+                            modality=e.modality,
+                            text=text,
+                            source=md.get("source"),
+                            ts=md.get("timestamp"),
+                            clip=md.get("clip_id"),
+                            domain=md.get("memory_domain"),
+                            run=md.get("run_id"),
+                            uids=md.get("user_id"),
+                            scope=md.get("memory_scope"),
+                        )
+                    else:
+                        sess.run(
+                            f"MERGE (n:{MEMORY_NODE_LABEL} {{id: $id}}) SET n.kind=$kind, n.modality=$modality, n.text=$text, n.source=$source, n.timestamp=$ts, n.clip_id=$clip, "
+                            "n.tenant_id=CASE WHEN n.tenant_id IS NULL THEN $tenant ELSE n.tenant_id END, "
+                            "n.memory_domain=$domain, n.run_id=$run, n.user_id=$uids, n.memory_scope=$scope "
+                            # label backfill for node
+                            "FOREACH (_ IN CASE WHEN $kind = 'episodic' THEN [1] ELSE [] END | SET n:Episodic) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'image' THEN [1] ELSE [] END | SET n:Image) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'audio' THEN [1] ELSE [] END | SET n:Voice) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND $modality = 'structured' THEN [1] ELSE [] END | SET n:Structured) "
+                            "FOREACH (_ IN CASE WHEN $kind = 'semantic' AND NOT $modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET n:Semantic) ",
+                            id=e.id,
+                            kind=e.kind,
+                            modality=e.modality,
+                            text=text,
+                            source=md.get("source"),
+                            ts=md.get("timestamp"),
+                            clip=md.get("clip_id"),
+                            tenant=md.get("tenant_id"),
+                            domain=md.get("memory_domain"),
+                            run=md.get("run_id"),
+                            uids=md.get("user_id"),
+                            scope=md.get("memory_scope"),
+                        )
                 # Merge relations
                 if edges:
                     for ed in edges:
                         did_work = True
                         w = ed.weight if ed.weight is not None else 1.0
                         rel = ed.rel_type.upper()
-                        sess.run(
-                            f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
-                            f"MERGE (s)-[r:{rel}]->(d) "
-                            "SET r.weight = coalesce(r.weight, 0.0) + $w",
-                            src=ed.src_id,
-                            dst=ed.dst_id,
-                            w=float(w),
-                        )
+                        if effective_tenant:
+                            result = sess.run(
+                                f"MATCH (s:{MEMORY_NODE_LABEL} {{id:$src, tenant_id:$tenant}}) "
+                                f"MATCH (d:{MEMORY_NODE_LABEL} {{id:$dst, tenant_id:$tenant}}) "
+                                f"MERGE (s)-[r:{rel}]->(d) "
+                                "SET r.tenant_id = $tenant "
+                                "SET r.weight = coalesce(r.weight, 0.0) + $w "
+                                "RETURN count(r) AS applied",
+                                src=ed.src_id,
+                                dst=ed.dst_id,
+                                tenant=effective_tenant,
+                                w=float(w),
+                            )
+                            applied = self._extract_applied_count(result)
+                            if applied is not None and applied != 1:
+                                raise RuntimeError(
+                                    f"merge_nodes_edges edge tenant validation failed: src={ed.src_id} dst={ed.dst_id} tenant={effective_tenant}"
+                                )
+                        else:
+                            sess.run(
+                                f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
+                                f"MERGE (s)-[r:{rel}]->(d) "
+                                "SET r.weight = coalesce(r.weight, 0.0) + $w",
+                                src=ed.src_id,
+                                dst=ed.dst_id,
+                                w=float(w),
+                            )
                 # If nothing was written (e.g., all entries missing id and no edges), run a no-op ping
                 # to surface driver/session errors for observability.
                 if not did_work:
@@ -4334,36 +4556,65 @@ RETURN count(ev) AS deleted
                 self._cb_open_until = _t.time() + max(1, self._cb_cooldown_s)
         return None
 
-    async def merge_rel(self, src_id: str, dst_id: str, rel_type: str, *, weight: Optional[float] = None) -> None:
+    async def merge_rel(
+        self,
+        src_id: str,
+        dst_id: str,
+        rel_type: str,
+        *,
+        weight: Optional[float] = None,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         import time as _t
         if self._cb_open_until and _t.time() < self._cb_open_until:
             return None
         if not self._driver:
             return None
+        self._require_legacy_memory_node_enabled("merge_rel")
         w = weight if weight is not None else 1.0
         rel = rel_type.upper()
         try:
-            with self._driver.session() as sess:
-                # Merge relation and ensure source/target nodes carry proper type labels if kind/modality present
-                q = (
-                    f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) "
-                    f"MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
-                    f"MERGE (s)-[r:{rel}]->(d) "
-                    "SET r.weight = coalesce(r.weight, 0.0) + $w "
-                    # label backfill for s
-                    "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'episodic' THEN [1] ELSE [] END | SET s:Episodic) "
-                    "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'image' THEN [1] ELSE [] END | SET s:Image) "
-                    "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'audio' THEN [1] ELSE [] END | SET s:Voice) "
-                    "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'structured' THEN [1] ELSE [] END | SET s:Structured) "
-                    "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND NOT coalesce(s.modality,'') IN ['image','audio','structured'] THEN [1] ELSE [] END | SET s:Semantic) "
-                    # label backfill for d
-                    "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'episodic' THEN [1] ELSE [] END | SET d:Episodic) "
-                    "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'image' THEN [1] ELSE [] END | SET d:Image) "
-                    "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'audio' THEN [1] ELSE [] END | SET d:Voice) "
-                    "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'structured' THEN [1] ELSE [] END | SET d:Structured) "
-                    "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND NOT coalesce(d.modality,'') IN ['image','audio','structured'] THEN [1] ELSE [] END | SET d:Semantic) "
-                )
-                sess.run(q, src=src_id, dst=dst_id, w=float(w))
+            with self._driver.session(database=self._database) as sess:
+                if self._strict_tenant_mode:
+                    tenant = self._validate_tenant_context(tenant_id, "merge_rel")
+                    result = sess.run(
+                        f"MATCH (s:{MEMORY_NODE_LABEL} {{id:$src, tenant_id:$tenant}}) "
+                        f"MATCH (d:{MEMORY_NODE_LABEL} {{id:$dst, tenant_id:$tenant}}) "
+                        f"MERGE (s)-[r:{rel}]->(d) "
+                        "SET r.tenant_id = $tenant "
+                        "SET r.weight = coalesce(r.weight, 0.0) + $w "
+                        "RETURN count(r) AS applied",
+                        src=src_id,
+                        dst=dst_id,
+                        tenant=tenant,
+                        w=float(w),
+                    )
+                    applied = self._extract_applied_count(result)
+                    if applied is not None and applied != 1:
+                        raise RuntimeError(
+                            f"merge_rel tenant validation failed: src={src_id} dst={dst_id} tenant={tenant}"
+                        )
+                else:
+                    # Merge relation and ensure source/target nodes carry proper type labels if kind/modality present
+                    q = (
+                        f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) "
+                        f"MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
+                        f"MERGE (s)-[r:{rel}]->(d) "
+                        "SET r.weight = coalesce(r.weight, 0.0) + $w "
+                        # label backfill for s
+                        "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'episodic' THEN [1] ELSE [] END | SET s:Episodic) "
+                        "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'image' THEN [1] ELSE [] END | SET s:Image) "
+                        "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'audio' THEN [1] ELSE [] END | SET s:Voice) "
+                        "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND coalesce(s.modality,'') = 'structured' THEN [1] ELSE [] END | SET s:Structured) "
+                        "FOREACH (_ IN CASE WHEN coalesce(s.kind,'') = 'semantic' AND NOT coalesce(s.modality,'') IN ['image','audio','structured'] THEN [1] ELSE [] END | SET s:Semantic) "
+                        # label backfill for d
+                        "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'episodic' THEN [1] ELSE [] END | SET d:Episodic) "
+                        "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'image' THEN [1] ELSE [] END | SET d:Image) "
+                        "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'audio' THEN [1] ELSE [] END | SET d:Voice) "
+                        "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND coalesce(d.modality,'') = 'structured' THEN [1] ELSE [] END | SET d:Structured) "
+                        "FOREACH (_ IN CASE WHEN coalesce(d.kind,'') = 'semantic' AND NOT coalesce(d.modality,'') IN ['image','audio','structured'] THEN [1] ELSE [] END | SET d:Semantic) "
+                    )
+                    sess.run(q, src=src_id, dst=dst_id, w=float(w))
             self._cb_fail_count = 0
         except Exception as e:
             self._cb_fail_count += 1
@@ -4440,7 +4691,7 @@ RETURN count(ev) AS deleted
             return {}
         stats = {"Episodic": 0, "Image": 0, "Voice": 0, "Semantic": 0, "Structured": 0, "Node": 0}
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 # 查询所有 MemoryNode 但缺少类型标签的节点
                 nodes = sess.run("""
                     MATCH (n:MemoryNode)
@@ -4479,7 +4730,7 @@ RETURN count(ev) AS deleted
         if not self._driver:
             return None
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 sess.run(
                     f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
                     "MERGE (s)-[r:EQUIVALENCE]->(d) SET r.pending=true, r.score = $score, r.reason = $reason, r.updated_at = timestamp()",
@@ -4495,7 +4746,7 @@ RETURN count(ev) AS deleted
         if not self._driver:
             return {"pending": []}
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 q = (
                     f"MATCH (s:{MEMORY_NODE_LABEL})-[r:EQUIVALENCE]->(d:{MEMORY_NODE_LABEL}) "
                     "WHERE coalesce(r.pending,false) = true "
@@ -4517,7 +4768,7 @@ RETURN count(ev) AS deleted
             return 0
         updated = 0
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 for (src, dst) in pairs:
                     w = float(weight) if weight is not None else None
                     # Ensure relation exists, then clear pending and set timestamps/weights
@@ -4538,7 +4789,7 @@ RETURN count(ev) AS deleted
             return 0
         deleted = 0
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 for (src, dst) in pairs:
                     sess.run(
                         f"MATCH (s:{MEMORY_NODE_LABEL} {{id:$src}})-[r:EQUIVALENCE]->(d:{MEMORY_NODE_LABEL} {{id:$dst}}) DELETE r",
@@ -4622,7 +4873,7 @@ RETURN count(ev) AS deleted
         rels = rel_whitelist or []
         result: Dict[str, Any] = {"neighbors": {}, "edges": []}
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 for sid in seed_ids:
                     if max_hops <= 0:
                         result["neighbors"][sid] = []
@@ -4718,7 +4969,7 @@ RETURN count(ev) AS deleted
         if not self._driver:
             return None
         try:
-            with self._driver.session() as sess:
+            with self._driver.session(database=self._database) as sess:
                 if rel_whitelist:
                     sess.run(
                         "MATCH ()-[r]->() WHERE type(r) IN $rels AND coalesce(r.weight,0.0) > $min SET r.weight = r.weight * $f",
@@ -4744,7 +4995,7 @@ RETURN count(ev) AS deleted
         for i in range(attempts):
             try:
                 t0 = _t.perf_counter()
-                with self._driver.session() as sess:
+                with self._driver.session(database=self._database) as sess:
                     res = sess.execute_write(lambda tx: fn(tx))
                 _addtx(int((_t.perf_counter() - t0) * 1000))
                 if i > 0:
@@ -4776,7 +5027,7 @@ RETURN count(ev) AS deleted
         for i in range(attempts):
             try:
                 t0 = _t.perf_counter()
-                with self._driver.session() as sess:
+                with self._driver.session(database=self._database) as sess:
                     res = sess.execute_read(lambda tx: fn(tx))
                 _addtx(int((_t.perf_counter() - t0) * 1000))
                 if i > 0:
@@ -4797,15 +5048,38 @@ RETURN count(ev) AS deleted
                 _t.sleep(backoff)
                 backoff = min(backoff * 2, 1.6)
 
-    async def merge_nodes_edges_batch(self, entries: List[MemoryEntry], edges: Optional[List[Edge]] = None, *, chunk_size: int = 500) -> None:
+    async def merge_nodes_edges_batch(
+        self,
+        entries: List[MemoryEntry],
+        edges: Optional[List[Edge]] = None,
+        *,
+        chunk_size: int = 500,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         if not self._driver or not entries and not edges:
             return None
+        self._require_legacy_memory_node_enabled("merge_nodes_edges_batch")
+        effective_tenant = str(tenant_id or "").strip() or str(self._infer_entry_tenant(entries) or "").strip()
+        if self._strict_tenant_mode:
+            effective_tenant = self._validate_tenant_context(effective_tenant, "merge_nodes_edges_batch")
         # batch nodes
         nodes_payload: List[Dict[str, Any]] = []
         for e in entries or []:
             if not e.id:
                 continue
             md = dict(e.metadata)
+            md_tenant = str(md.get("tenant_id") or "").strip()
+            if effective_tenant:
+                if md_tenant and md_tenant != effective_tenant:
+                    raise ValueError(
+                        f"merge_nodes_edges_batch entry tenant mismatch: expected={effective_tenant} got={md_tenant}"
+                    )
+                if not md_tenant:
+                    md["tenant_id"] = effective_tenant
+                    e.metadata = md
+                    md_tenant = effective_tenant
+            if self._strict_tenant_mode and not md_tenant:
+                raise ValueError("merge_nodes_edges_batch strict_tenant_mode requires entry.metadata.tenant_id")
             nodes_payload.append({
                 "id": e.id,
                 "kind": e.kind,
@@ -4821,20 +5095,36 @@ RETURN count(ev) AS deleted
                 "scope": md.get("memory_scope"),
             })
         def _merge_nodes(tx, chunk: List[Dict[str, Any]]):
-            cypher = (
-                "UNWIND $nodes AS n "
-                f"MERGE (e:{MEMORY_NODE_LABEL} {{id:n.id}}) "
-                "SET e.kind=n.kind, e.modality=n.modality, e.text=n.text, e.source=n.source, "
-                "e.timestamp=n.ts, e.clip_id=n.clip, e.tenant_id=CASE WHEN e.tenant_id IS NULL THEN n.tenant ELSE e.tenant_id END, "
-                "e.memory_domain=n.domain, e.run_id=n.run, e.user_id=n.uids, e.memory_scope=n.scope "
-                # label backfill for each node
-                "FOREACH (_ IN CASE WHEN n.kind = 'episodic' THEN [1] ELSE [] END | SET e:Episodic) "
-                "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'image' THEN [1] ELSE [] END | SET e:Image) "
-                "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'audio' THEN [1] ELSE [] END | SET e:Voice) "
-                "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'structured' THEN [1] ELSE [] END | SET e:Structured) "
-                "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND NOT n.modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET e:Semantic) "
-            )
-            tx.run(cypher, nodes=chunk)
+            if effective_tenant:
+                cypher = (
+                    "UNWIND $nodes AS n "
+                    f"MERGE (e:{MEMORY_NODE_LABEL} {{id:n.id, tenant_id:$tenant}}) "
+                    "SET e.kind=n.kind, e.modality=n.modality, e.text=n.text, e.source=n.source, "
+                    "e.timestamp=n.ts, e.clip_id=n.clip, e.tenant_id=$tenant, "
+                    "e.memory_domain=n.domain, e.run_id=n.run, e.user_id=n.uids, e.memory_scope=n.scope "
+                    # label backfill for each node
+                    "FOREACH (_ IN CASE WHEN n.kind = 'episodic' THEN [1] ELSE [] END | SET e:Episodic) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'image' THEN [1] ELSE [] END | SET e:Image) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'audio' THEN [1] ELSE [] END | SET e:Voice) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'structured' THEN [1] ELSE [] END | SET e:Structured) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND NOT n.modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET e:Semantic) "
+                )
+                tx.run(cypher, nodes=chunk, tenant=effective_tenant)
+            else:
+                cypher = (
+                    "UNWIND $nodes AS n "
+                    f"MERGE (e:{MEMORY_NODE_LABEL} {{id:n.id}}) "
+                    "SET e.kind=n.kind, e.modality=n.modality, e.text=n.text, e.source=n.source, "
+                    "e.timestamp=n.ts, e.clip_id=n.clip, e.tenant_id=CASE WHEN e.tenant_id IS NULL THEN n.tenant ELSE e.tenant_id END, "
+                    "e.memory_domain=n.domain, e.run_id=n.run, e.user_id=n.uids, e.memory_scope=n.scope "
+                    # label backfill for each node
+                    "FOREACH (_ IN CASE WHEN n.kind = 'episodic' THEN [1] ELSE [] END | SET e:Episodic) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'image' THEN [1] ELSE [] END | SET e:Image) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'audio' THEN [1] ELSE [] END | SET e:Voice) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND n.modality = 'structured' THEN [1] ELSE [] END | SET e:Structured) "
+                    "FOREACH (_ IN CASE WHEN n.kind = 'semantic' AND NOT n.modality IN ['image','audio','structured'] THEN [1] ELSE [] END | SET e:Semantic) "
+                )
+                tx.run(cypher, nodes=chunk)
         for i in range(0, len(nodes_payload), max(1, int(chunk_size))):
             chunk = nodes_payload[i:i+chunk_size]
             if not chunk:
@@ -4873,11 +5163,27 @@ RETURN count(ev) AS deleted
                 if rel not in ALLOWED_RELS:
                     raise ValueError(f"Invalid relation type: {rel}. Must be one of {ALLOWED_RELS}")
 
-                cypher = (
-                    f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
-                    f"MERGE (s)-[e:{rel}]->(d) SET e.weight = coalesce(e.weight,0.0) + $w"
-                )
-                tx.run(cypher, src=r["src"], dst=r["dst"], w=r["weight"])
+                if effective_tenant:
+                    cypher = (
+                        f"MATCH (s:{MEMORY_NODE_LABEL} {{id:$src, tenant_id:$tenant}}) "
+                        f"MATCH (d:{MEMORY_NODE_LABEL} {{id:$dst, tenant_id:$tenant}}) "
+                        f"MERGE (s)-[e:{rel}]->(d) "
+                        "SET e.tenant_id = $tenant "
+                        "SET e.weight = coalesce(e.weight,0.0) + $w "
+                        "RETURN count(e) AS applied"
+                    )
+                    _res = tx.run(cypher, src=r["src"], dst=r["dst"], tenant=effective_tenant, w=r["weight"])
+                    applied = self._extract_applied_count(_res)
+                    if applied is not None and applied != 1:
+                        raise RuntimeError(
+                            f"merge_nodes_edges_batch edge tenant validation failed: src={r['src']} dst={r['dst']} tenant={effective_tenant}"
+                        )
+                else:
+                    cypher = (
+                        f"MERGE (s:{MEMORY_NODE_LABEL} {{id:$src}}) MERGE (d:{MEMORY_NODE_LABEL} {{id:$dst}}) "
+                        f"MERGE (s)-[e:{rel}]->(d) SET e.weight = coalesce(e.weight,0.0) + $w"
+                    )
+                    tx.run(cypher, src=r["src"], dst=r["dst"], w=r["weight"])
         for i in range(0, len(rels_payload), max(1, int(chunk_size))):
             chunk = rels_payload[i:i+chunk_size]
             if not chunk:
@@ -4889,10 +5195,21 @@ RETURN count(ev) AS deleted
             except Exception:
                 pass
 
-    async def merge_rel_batch(self, links: List[Tuple[str, str, str, float]], *, chunk_size: int = 1000) -> None:
+    async def merge_rel_batch(
+        self,
+        links: List[Tuple[str, str, str, float]],
+        *,
+        chunk_size: int = 1000,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         # links: list of (src, dst, rel_type, weight)
         payload = [{"src": a, "dst": b, "rel": r, "weight": float(w)} for (a, b, r, w) in links]
-        await self.merge_nodes_edges_batch([], [Edge(src_id=p["src"], dst_id=p["dst"], rel_type=p["rel"], weight=p["weight"]) for p in payload], chunk_size=chunk_size)
+        await self.merge_nodes_edges_batch(
+            [],
+            [Edge(src_id=p["src"], dst_id=p["dst"], rel_type=p["rel"], weight=p["weight"]) for p in payload],
+            chunk_size=chunk_size,
+            tenant_id=tenant_id,
+        )
 
     async def find_paths(self, seed_ids: List[str], *, rel_whitelist: Optional[List[str]] = None, max_hops: int = 1, min_weight: float = 0.0, user_ids: Optional[List[str]] = None, memory_domain: Optional[str] = None, cap: int = 1000) -> Dict[str, List[Dict[str, Any]]]:
         """Find neighbors up to max_hops with attribute filters.

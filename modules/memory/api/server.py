@@ -389,6 +389,17 @@ def create_service() -> MemoryService:
     n_uri_norm, uri_meta = _normalize_neo4j_uri(_resolve_env_like_str(n_uri_raw, "bolt://127.0.0.1:7687"))
     n_user = os.getenv("NEO4J_USER") or gcfg.get("user", "neo4j")
     n_pass = os.getenv("NEO4J_PASSWORD") or gcfg.get("password", "password")
+    n_db = os.getenv("NEO4J_DATABASE") or gcfg.get("database", "neo4j")
+    env_strict_tenant_mode = os.getenv("MEMORY_GRAPH_STRICT_TENANT_MODE")
+    strict_tenant_mode = (
+        env_strict_tenant_mode if env_strict_tenant_mode is not None else gcfg.get("strict_tenant_mode", False)
+    )
+    env_enable_legacy_memory_node = os.getenv("MEMORY_GRAPH_ENABLE_LEGACY_MEMORY_NODE")
+    enable_legacy_memory_node = (
+        env_enable_legacy_memory_node
+        if env_enable_legacy_memory_node is not None
+        else gcfg.get("enable_legacy_memory_node", True)
+    )
     try:
         import logging
         # Silence verbose neo4j driver logs
@@ -409,6 +420,9 @@ def create_service() -> MemoryService:
         "uri": n_uri_norm,
         "user": _resolve_env_like_str(n_user, "neo4j"),
         "password": _resolve_env_like_str(n_pass, "password"),
+        "database": _resolve_env_like_str(n_db, "neo4j"),
+        "strict_tenant_mode": strict_tenant_mode,
+        "enable_legacy_memory_node": enable_legacy_memory_node,
         "reliability": rcfg,
         "uri_debug": uri_meta,
     })
@@ -3422,9 +3436,17 @@ async def delete(body: DeleteBody, request: Request):
 
 @app.post("/link")
 async def link(body: LinkBody, request: Request):
-    await _enforce_security(request, require_signature=True)
+    ctx = await _enforce_security(request, require_signature=True)
+    tenant_id = str(ctx.get("tenant_id") or "")
     try:
-        ok = await svc.link(body.src_id, body.dst_id, body.rel_type, weight=body.weight, confirm=body.confirm)
+        ok = await svc.link(
+            body.src_id,
+            body.dst_id,
+            body.rel_type,
+            weight=body.weight,
+            confirm=body.confirm,
+            tenant_id=tenant_id,
+        )
         return {"ok": ok}
     except SafetyError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -3472,13 +3494,21 @@ class BatchLinkBody(BaseModel):
 
 @app.post("/batch_link")
 async def batch_link(body: BatchLinkBody, request: Request):
-    await _enforce_security(request, require_signature=True)
+    ctx = await _enforce_security(request, require_signature=True)
+    tenant_id = str(ctx.get("tenant_id") or "")
     if not body.links:
         return {"ok": True, "linked": 0, "errors": []}
     results = {"linked": 0, "errors": []}
     for l in body.links:
         try:
-            ok = await svc.link(l.src_id, l.dst_id, l.rel_type, weight=l.weight, confirm=(l.confirm if l.confirm is not None else body.confirm))
+            ok = await svc.link(
+                l.src_id,
+                l.dst_id,
+                l.rel_type,
+                weight=l.weight,
+                confirm=(l.confirm if l.confirm is not None else body.confirm),
+                tenant_id=tenant_id,
+            )
             if ok:
                 results["linked"] += 1
         except SafetyError as e:

@@ -86,13 +86,14 @@ class MemoryMCPAdapter:
             return {"version": ver.value}
 
         if name == "memory.link":
+            tenant_id = str(params.get("tenant_id") or "").strip() or None
             ok = await self.svc.link(
                 str(params.get("src_id")),
                 str(params.get("dst_id")),
                 str(params.get("rel_type")),
                 weight=params.get("weight"),
+                tenant_id=tenant_id,
             )
             return {"ok": ok}
 
         raise ValueError(f"Unknown tool: {name}")
-

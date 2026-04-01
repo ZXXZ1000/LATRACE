@@ -103,10 +103,16 @@ def memory_delete(id: str, soft: bool = True, reason: str | None = None) -> str:
 
 
 @mcp.tool()
-def memory_link(src_id: str, dst_id: str, rel_type: str, weight: float | None = None) -> str:
+def memory_link(
+    src_id: str,
+    dst_id: str,
+    rel_type: str,
+    weight: float | None = None,
+    tenant_id: str | None = None,
+) -> str:
     """Create or update a relation."""
     async def _run():
-        ok = await svc.link(src_id, dst_id, rel_type, weight=weight)
+        ok = await svc.link(src_id, dst_id, rel_type, weight=weight, tenant_id=tenant_id)
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
     return asyncio.get_event_loop().run_until_complete(_run())

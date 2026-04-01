@@ -79,12 +79,27 @@ def test_merge_nodes_edges_batch_builds_unwind_and_splits():
     node_merges = [c for c in calls if c["cypher"].startswith("UNWIND $nodes AS n")]
     assert len(node_merges) >= 2
     assert all("MERGE (e:MemoryNode" in c["cypher"] for c in node_merges), "memory nodes must use :MemoryNode label"
-    assert all("e.tenant_id=CASE WHEN e.tenant_id IS NULL THEN n.tenant ELSE e.tenant_id END" in c["cypher"] for c in node_merges)
-    assert all(all(node.get("tenant") == "tenant-a" for node in c["params"]["nodes"]) for c in node_merges)
+    assert all(
+        (
+            "e.tenant_id=CASE WHEN e.tenant_id IS NULL THEN n.tenant ELSE e.tenant_id END" in c["cypher"]
+            or "MERGE (e:MemoryNode {id:n.id, tenant_id:$tenant})" in c["cypher"]
+        )
+        for c in node_merges
+    )
+    assert all(
+        (
+            all(node.get("tenant") == "tenant-a" for node in c["params"]["nodes"])
+            or c["params"].get("tenant") == "tenant-a"
+        )
+        for c in node_merges
+    )
     # Relationship MERGE statements present
     rel_merges = [c for c in calls if "MERGE (s)-[e:" in c["cypher"]]
     assert len(rel_merges) >= 1
-    assert all("MERGE (s:MemoryNode" in c["cypher"] for c in rel_merges), "memory rels must use :MemoryNode label"
+    assert all(
+        ("MERGE (s:MemoryNode" in c["cypher"] or "MATCH (s:MemoryNode" in c["cypher"])
+        for c in rel_merges
+    ), "memory rels must use :MemoryNode label"
 
 
 def test_find_paths_returns_neighbors_map():

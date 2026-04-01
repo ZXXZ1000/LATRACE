@@ -2266,15 +2266,38 @@ class MemoryService:
         # P2: append character index entries (structured) for any character_id present
         try:
             present_chars = set()
+            tenant_values: set[str] = set()
+            default_user_ids: Optional[List[str]] = None
+            default_domain: Optional[str] = None
             for e in safe_to_write:
-                cid = e.metadata.get("character_id") if isinstance(e.metadata, dict) else None
+                md = e.metadata if isinstance(e.metadata, dict) else {}
+                cid = md.get("character_id")
                 if cid:
                     present_chars.add(str(cid))
+                tid = str(md.get("tenant_id") or "").strip()
+                if tid:
+                    tenant_values.add(tid)
+                if default_user_ids is None and isinstance(md.get("user_id"), list):
+                    default_user_ids = [str(x) for x in md.get("user_id") if x is not None and str(x).strip()]
+                if default_domain is None and str(md.get("memory_domain") or "").strip():
+                    default_domain = str(md.get("memory_domain")).strip()
+            if len(tenant_values) > 1:
+                raise RuntimeError(f"cross_tenant_write_forbidden: write payload mixed tenants {sorted(tenant_values)}")
+            default_tenant = next(iter(tenant_values)) if tenant_values else None
             for ch in sorted(present_chars):
-                ce = MemoryEntry(kind="semantic", modality="structured", contents=[ch], metadata={"entity_type": "character"})
+                ce_md: Dict[str, Any] = {"entity_type": "character"}
+                if default_tenant:
+                    ce_md["tenant_id"] = default_tenant
+                if default_user_ids:
+                    ce_md["user_id"] = list(default_user_ids)
+                if default_domain:
+                    ce_md["memory_domain"] = default_domain
+                ce = MemoryEntry(kind="semantic", modality="structured", contents=[ch], metadata=ce_md)
                 if not ce.id:
                     ce.id = f"char-{len(safe_to_write)}"
                 safe_to_write.append(ce)
+        except RuntimeError:
+            raise
         except Exception:
             pass
 
@@ -2295,25 +2318,67 @@ class MemoryService:
                     links2.append(Edge(src_id=src, dst_id=dst, rel_type=ed.rel_type, weight=ed.weight))
         except Exception:
             links2 = links
-        # 2) graph nodes first (chunked), then edges (batched)
-        if hasattr(self.graph, "merge_nodes_edges_batch"):
-            for i in range(0, len(safe_to_write), chunk_items):
-                part = safe_to_write[i : i + chunk_items]
-                await self.graph.merge_nodes_edges_batch(part, None)
-        else:
-            for i in range(0, len(safe_to_write), chunk_items):
-                part = safe_to_write[i : i + chunk_items]
+        tenant_values: set[str] = set()
+        for e in safe_to_write:
+            md = e.metadata if isinstance(e.metadata, dict) else {}
+            tid = str(md.get("tenant_id") or "").strip()
+            if tid:
+                tenant_values.add(tid)
+        if len(tenant_values) > 1:
+            raise RuntimeError(f"cross_tenant_write_forbidden: graph write mixed tenants {sorted(tenant_values)}")
+        graph_tenant = next(iter(tenant_values)) if tenant_values else None
+
+        async def _merge_nodes_part(part: List[MemoryEntry]) -> None:
+            if hasattr(self.graph, "merge_nodes_edges_batch"):
+                try:
+                    await self.graph.merge_nodes_edges_batch(part, None, tenant_id=graph_tenant)
+                    return
+                except TypeError as exc:
+                    if "tenant_id" not in str(exc):
+                        raise
+                    await self.graph.merge_nodes_edges_batch(part, None)
+                    return
+            try:
+                await self.graph.merge_nodes_edges(part, None, tenant_id=graph_tenant)
+            except TypeError as exc:
+                if "tenant_id" not in str(exc):
+                    raise
                 await self.graph.merge_nodes_edges(part, None)
+
+        async def _merge_edges_only(part_edges: List[Edge]) -> None:
+            if hasattr(self.graph, "merge_nodes_edges_batch"):
+                try:
+                    await self.graph.merge_nodes_edges_batch([], part_edges, tenant_id=graph_tenant)
+                    return
+                except TypeError as exc:
+                    if "tenant_id" not in str(exc):
+                        raise
+                    await self.graph.merge_nodes_edges_batch([], part_edges)
+                    return
+            if hasattr(self.graph, "merge_rel_batch"):
+                lst = [(e.src_id, e.dst_id, e.rel_type, (e.weight if e.weight is not None else 1.0)) for e in part_edges]
+                try:
+                    await self.graph.merge_rel_batch(lst, tenant_id=graph_tenant)
+                except TypeError as exc:
+                    if "tenant_id" not in str(exc):
+                        raise
+                    await self.graph.merge_rel_batch(lst)
+                return
+            for ed in part_edges:
+                try:
+                    await self.graph.merge_rel(ed.src_id, ed.dst_id, ed.rel_type, weight=ed.weight, tenant_id=graph_tenant)
+                except TypeError as exc:
+                    if "tenant_id" not in str(exc):
+                        raise
+                    await self.graph.merge_rel(ed.src_id, ed.dst_id, ed.rel_type, weight=ed.weight)
+
+        # 2) graph nodes first (chunked), then edges (batched)
+        for i in range(0, len(safe_to_write), chunk_items):
+            part = safe_to_write[i : i + chunk_items]
+            await _merge_nodes_part(part)
         # edges second
         if links2:
-            if hasattr(self.graph, "merge_nodes_edges_batch"):
-                await self.graph.merge_nodes_edges_batch([], links2)
-            elif hasattr(self.graph, "merge_rel_batch"):
-                lst = [(e.src_id, e.dst_id, e.rel_type, (e.weight if e.weight is not None else 1.0)) for e in links2]
-                await self.graph.merge_rel_batch(lst)
-            else:
-                for ed in links2:
-                    await self.graph.merge_rel(ed.src_id, ed.dst_id, ed.rel_type, weight=ed.weight)
+            await _merge_edges_only(links2)
         if links:
             try:
                 inc("graph_rel_merges_total", len(links))
@@ -2664,7 +2729,16 @@ class MemoryService:
 
         return self._run_sync(_do())
 
-    async def link(self, src_id: str, dst_id: str, rel_type: str, *, weight: Optional[float] = None, confirm: Optional[bool] = None) -> bool:
+    async def link(
+        self,
+        src_id: str,
+        dst_id: str,
+        rel_type: str,
+        *,
+        weight: Optional[float] = None,
+        confirm: Optional[bool] = None,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
         # whitelist check
         if rel_type not in self._allowed_rel_types:
             raise SafetyError(f"relation '{rel_type}' not allowed")
@@ -2680,8 +2754,17 @@ class MemoryService:
             if not ok:
                 raise SafetyError(f"link '{rel_type}' requires confirmation")
         # TODO: validate nodes exist, then merge relation
-        await self.graph.merge_rel(src_id, dst_id, rel_type, weight=weight)
-        await self.audit.add_one("LINK", f"{src_id}->{dst_id}:{rel_type}", {"weight": weight})
+        try:
+            await self.graph.merge_rel(src_id, dst_id, rel_type, weight=weight, tenant_id=tenant_id)
+        except TypeError as exc:
+            if "tenant_id" not in str(exc):
+                raise
+            await self.graph.merge_rel(src_id, dst_id, rel_type, weight=weight)
+
+        audit_payload: Dict[str, Any] = {"weight": weight}
+        if tenant_id:
+            audit_payload["tenant_id"] = tenant_id
+        await self.audit.add_one("LINK", f"{src_id}->{dst_id}:{rel_type}", audit_payload)
         return True
 
     # ---- Deep Health Check ----
