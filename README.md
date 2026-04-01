@@ -262,7 +262,8 @@ for memory in memories:
 
 ## 🤝 Support & Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions, issue reports, and pull requests. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started. I will personally review and merge PRs once they are ready.
+If you run into any issues, please contact us at [zx19970301@gmail.com](mailto:zx19970301@gmail.com).
 
 
 ## 📄 License

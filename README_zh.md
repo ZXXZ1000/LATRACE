@@ -260,7 +260,8 @@ for memory in memories:
 
 ## 🤝 技术支持与开源贡献
 
-我们极其欢迎来自开源社区的智慧火花！如果对此项目感兴趣，请务必先查阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解代码与架构公约。
+我们欢迎任何形式的贡献、Issue 反馈和 Pull Request。开始前请先查阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解参与方式。我会亲自审查并合并已经准备好的 PR。
+如有任何问题，请联系邮箱：[zx19970301@gmail.com](mailto:zx19970301@gmail.com)。
 
 
 ## 📄 开源许可证 (License)
