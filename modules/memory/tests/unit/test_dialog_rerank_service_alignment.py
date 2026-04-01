@@ -1,16 +1,47 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-import benchmark.shared.adapters.rerank_service as bench_service
-from benchmark.shared.adapters.rerank_types import EvidenceType as BenchEvidenceType
-from benchmark.shared.adapters.rerank_types import RetrievalCandidate as BenchCandidate
-from benchmark.shared.adapters.rerank_types import RerankConfig as BenchConfig
+
+def _ensure_package(name: str, path: Path) -> None:
+    if name in sys.modules:
+        return
+    module = types.ModuleType(name)
+    module.__path__ = [str(path)]  # type: ignore[attr-defined]
+    sys.modules[name] = module
+
+
+def _load_module(name: str, path: Path):
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_ensure_package("benchmark", ROOT / "benchmark")
+_ensure_package("benchmark.shared", ROOT / "benchmark" / "shared")
+_ensure_package("benchmark.shared.adapters", ROOT / "benchmark" / "shared" / "adapters")
+bench_types = _load_module(
+    "benchmark.shared.adapters.rerank_types",
+    ROOT / "benchmark" / "shared" / "adapters" / "rerank_types.py",
+)
+bench_service = _load_module(
+    "benchmark.shared.adapters.rerank_service",
+    ROOT / "benchmark" / "shared" / "adapters" / "rerank_service.py",
+)
+BenchEvidenceType = bench_types.EvidenceType
+BenchCandidate = bench_types.RetrievalCandidate
+BenchConfig = bench_types.RerankConfig
 
 from modules.memory.application.rerank_dialog_v1 import (
     EvidenceType,

@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import sys
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-import benchmark.scripts.step3_build_graph as bench_step3
+
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+bench_step3 = _load_module(
+    "benchmark_step3_build_graph",
+    ROOT / "benchmark" / "scripts" / "step3_build_graph.py",
+)
 
 from modules.memory.domain.dialog_text_pipeline_v1 import (
     build_entries_and_links,
