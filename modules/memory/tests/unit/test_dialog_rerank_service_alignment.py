@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[4]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import benchmark.shared.adapters.rerank_service as bench_service
 from benchmark.shared.adapters.rerank_types import EvidenceType as BenchEvidenceType
 from benchmark.shared.adapters.rerank_types import RetrievalCandidate as BenchCandidate
