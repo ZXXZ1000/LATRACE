@@ -8,7 +8,6 @@ Cycle13 ETL 演示脚本：
 """
 
 import os
-import asyncio
 from modules.memory.etl.pkl_to_db import run as etl_run
 from modules.memory.application.service import MemoryService
 from modules.memory.infra.inmem_vector_store import InMemVectorStore
@@ -26,7 +25,7 @@ def main() -> None:
     # 2) in-memory write and quick search check（可选）
     stats2 = etl_run(pkl, dry_run=False, limit=200, inmem=True, batch_size=500)
     print("INMEM IMPORT:", stats2)
-    svc = MemoryService(InMemVectorStore(), InMemGraphStore(), AuditStore())  # new empty; here仅演示接口
+    MemoryService(InMemVectorStore(), InMemGraphStore(), AuditStore())  # new empty; here仅演示接口
     # 如果需要进一步验证，可以在上一步返回 MemoryService 或改造 etl_run 返回 svc 以便检索验证
 
 

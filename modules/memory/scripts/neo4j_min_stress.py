@@ -14,7 +14,7 @@ import time
 from typing import List
 
 from modules.memory.infra.neo4j_store import Neo4jStore
-from modules.memory.contracts.memory_models import MemoryEntry, Edge
+from modules.memory.contracts.memory_models import MemoryEntry
 
 
 def build_entries(n: int) -> List[MemoryEntry]:

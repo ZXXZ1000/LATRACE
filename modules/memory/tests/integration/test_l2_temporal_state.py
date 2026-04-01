@@ -13,12 +13,12 @@ These tests verify temporal reasoning capabilities using InMem stores.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import pytest
 
 from modules.memory.application.service import MemoryService
-from modules.memory.contracts.memory_models import Edge, MemoryEntry, SearchFilters
+from modules.memory.contracts.memory_models import SearchFilters
 from modules.memory.infra.audit_store import InMemAuditStore
 from modules.memory.infra.inmem_graph_store import InMemGraphStore
 from modules.memory.infra.inmem_vector_store import InMemVectorStore
@@ -26,7 +26,6 @@ from modules.memory.infra.inmem_vector_store import InMemVectorStore
 from .test_data.l1_l2_scenario import (
     EXPECTED_RESULTS,
     MEMORY_DOMAIN,
-    TENANT_ID,
     USER_ID,
     TEST_EVENTS,
     create_memory_edges,
@@ -165,7 +164,6 @@ async def test_q5_event_sequence_order() -> None:
     events_sorted = sorted(events_with_time, key=lambda x: x[0])
     
     # Verify sequence: arrive -> put key -> change clothes -> move key -> phone
-    expected_sequence = ["回到家", "钥匙", "换衣服", "钥匙", "手机"]
     
     # Check that events exist in roughly expected order
     if events_sorted:
@@ -180,7 +178,7 @@ async def test_q5_graph_next_event_edge() -> None:
     await _populate_service(svc)
     
     # Search with graph expansion to get NEXT_EVENT edges
-    result = await svc.search(
+    await svc.search(
         query="回到家",
         topk=5,
         filters=SearchFilters(
@@ -427,7 +425,6 @@ async def test_q8_lock_before_leave_basic() -> None:
     
     # Find lock event
     lock_found = False
-    lock_time: Optional[float] = None
     
     for hit in result.hits:
         content = hit.entry.get_primary_content()
@@ -439,11 +436,11 @@ async def test_q8_lock_before_leave_basic() -> None:
             t_start = hit.entry.metadata.get("t_abs_start")
             
             if ts:
-                lock_time = ts
+                pass
             elif t_start:
                 try:
                     dt = datetime.fromisoformat(t_start.replace("Z", "+00:00"))
-                    lock_time = dt.timestamp()
+                    dt.timestamp()
                 except (ValueError, AttributeError):
                     pass
             break

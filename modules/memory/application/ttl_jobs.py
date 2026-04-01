@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict
 from datetime import datetime, timezone, timedelta
 
 from modules.memory.contracts.memory_models import MemoryEntry

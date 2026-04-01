@@ -14,12 +14,12 @@ queries using InMem stores.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Set
+from typing import Set
 
 import pytest
 
 from modules.memory.application.service import MemoryService
-from modules.memory.contracts.memory_models import Edge, MemoryEntry, SearchFilters
+from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
 from modules.memory.infra.audit_store import InMemAuditStore
 from modules.memory.infra.inmem_graph_store import InMemGraphStore
 from modules.memory.infra.inmem_vector_store import InMemVectorStore
@@ -271,15 +271,12 @@ async def test_q3_object_search_red_cup() -> None:
     )
     
     # Check if any result relates to red cup entity
-    found_cup = False
     for hit in result.hits:
         content = hit.entry.get_primary_content()
         if "红色" in content and "杯" in content:
-            found_cup = True
             break
         # Also check entity matches
         if hit.id == "entity_red_cup":
-            found_cup = True
             break
     
     # Note: This test may need adjustment based on actual object search implementation

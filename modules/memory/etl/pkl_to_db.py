@@ -24,8 +24,7 @@ from __future__ import annotations
 """
 
 import argparse
-import uuid
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from modules.memory.contracts.memory_models import MemoryEntry, Edge
 from modules.memory.application.service import MemoryService
@@ -114,7 +113,7 @@ def run(
             entries, rels = mapper.map(vg, defaults=defaults)
             if limit is not None:
                 entries = entries[:limit]
-        except Exception as e:
+        except Exception:
             entries = []
             rels = []
     # 统一映射失败：不再提供旧版回退，直接告警退出
@@ -135,19 +134,18 @@ def run(
         batch_entries = entries[i : i + batch_size]
         # 仅在第一批携带全部关系，避免重复（简化处理）
         batch_links = rels if i == 0 else None
-        ver = None
         try:
             import asyncio
 
             async def _one():
                 return await svc.write(batch_entries, batch_links, upsert=True)
 
-            ver = asyncio.run(_one())
+            asyncio.run(_one())
         except RuntimeError:
             # in case of nested loop
             import asyncio as _a
 
-            ver = _a.get_event_loop().run_until_complete(svc.write(batch_entries, batch_links, upsert=True))
+            _a.get_event_loop().run_until_complete(svc.write(batch_entries, batch_links, upsert=True))
         written += len(batch_entries)
     print(f"Imported entries={written} relations={len(rels)}")
     # 若 mapper 可用，尝试建立 equivalence 候选（仅在明确确认时执行）

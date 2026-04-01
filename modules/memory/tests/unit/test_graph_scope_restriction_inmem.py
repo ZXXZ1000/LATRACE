@@ -7,7 +7,6 @@ from modules.memory.infra.inmem_vector_store import InMemVectorStore
 from modules.memory.infra.inmem_graph_store import InMemGraphStore
 from modules.memory.infra.audit_store import AuditStore
 from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
-from modules.memory.application import runtime_config as rtconf
 
 
 def test_inmem_graph_restrict_user_domain():

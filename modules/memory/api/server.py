@@ -13,7 +13,6 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, TypedDic
 import logging
 import time
 import hashlib
-import httpx
 import jwt
 import yaml
 from pathlib import Path
@@ -89,7 +88,7 @@ from modules.memory.infra.vector_store_router import (
     VectorStoreRouter,
 )
 if TYPE_CHECKING:
-    from modules.memory.infra.milvus_store import MilvusStore
+    pass
 from modules.memory.infra.equiv_store import EquivStore
 from modules.memory.infra.neo4j_store import Neo4jStore
 from modules.memory.infra.audit_store import AuditStore
@@ -290,7 +289,7 @@ def _normalize_neo4j_uri(raw_uri: str, *, default_host: str = "127.0.0.1", defau
         if "://" not in uri:
             uri = f"bolt://{uri}"
         parsed = urlparse(uri)
-        scheme = parsed.scheme.lower() if parsed.scheme else "bolt"
+        parsed.scheme.lower() if parsed.scheme else "bolt"
         host = parsed.hostname or default_host
         port = parsed.port or default_port
         if host in ("localhost", "::1"):
@@ -3417,7 +3416,7 @@ async def write(body: WriteBody, request: Request):
                 except Exception:
                     # Best-effort; do not block writes on metadata enrichment.
                     pass
-        links = [Edge.model_validate(l) for l in body.links] if body.links else None
+        links = [Edge.model_validate(link) for link in body.links] if body.links else None
         res = await svc.write(entries, links, upsert=body.upsert, return_id_map=body.return_id_map)
         if body.return_id_map and isinstance(res, tuple):
             ver, id_map = res
@@ -3518,20 +3517,22 @@ async def batch_link(body: BatchLinkBody, request: Request):
     if not body.links:
         return {"ok": True, "linked": 0, "errors": []}
     results = {"linked": 0, "errors": []}
-    for l in body.links:
+    for link in body.links:
         try:
             ok = await svc.link(
-                l.src_id,
-                l.dst_id,
-                l.rel_type,
-                weight=l.weight,
-                confirm=(l.confirm if l.confirm is not None else body.confirm),
+                link.src_id,
+                link.dst_id,
+                link.rel_type,
+                weight=link.weight,
+                confirm=(link.confirm if link.confirm is not None else body.confirm),
                 tenant_id=tenant_id,
             )
             if ok:
                 results["linked"] += 1
         except SafetyError as e:
-            results["errors"].append({"src": l.src_id, "dst": l.dst_id, "rel": l.rel_type, "error": str(e)})
+            results["errors"].append(
+                {"src": link.src_id, "dst": link.dst_id, "rel": link.rel_type, "error": str(e)}
+            )
     if results["errors"]:
         raise HTTPException(status_code=409, detail=results)
     return {"ok": True, **results}

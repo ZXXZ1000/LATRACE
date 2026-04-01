@@ -50,7 +50,7 @@ def test_qdrant_multimodal_union_and_filters(monkeypatch):
     store.session.post = _fake_post  # type: ignore[assignment]
 
     # request all modalities
-    res = types.SimpleNamespace()
+    types.SimpleNamespace()
     import asyncio
     results = asyncio.run(store.search_vectors("科幻", {"modality": ["text", "image", "audio"]}, topk=3, threshold=None))
 

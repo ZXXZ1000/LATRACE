@@ -42,10 +42,21 @@ def _has_provider_credentials(provider: str) -> bool:
         return any(os.getenv(k) for k in ("DASHSCOPE_API_KEY", "EMBEDDING_API_KEY", "QWEN_API_KEY"))
     if p in {"openai", "openai_compat", "openai-compatible"}:
         return any(os.getenv(k) for k in ("OPENAI_API_KEY", "OPENAI_COMPAT_API_KEY"))
+    if p in {"openrouter", "open_router"}:
+        return any(os.getenv(k) for k in ("OPENROUTER_EMBEDDING_API_KEY", "OPENROUTER_API_KEY"))
     if p in {"gemini"}:
         return any(os.getenv(k) for k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"))
     # other providers are not supported explicitly in embedding_adapter
     return False
+
+
+def test_has_provider_credentials_accepts_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert _has_provider_credentials("openrouter") is False
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-openrouter")
+    assert _has_provider_credentials("openrouter") is True
 
 
 def test_embedding_provider_connectivity_or_fallback():
@@ -65,7 +76,12 @@ def test_embedding_provider_connectivity_or_fallback():
 
     assert isinstance(vec, list) and len(vec) == dim
 
-    is_ci = bool(os.getenv("CI") or os.getenv("REQUIRE_EMBEDDING_CONNECTIVITY"))
+    require_connectivity = str(os.getenv("REQUIRE_EMBEDDING_CONNECTIVITY") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     # Local provider: insist on real model when可用，否则跳过并提示缺依赖
     if provider == "local":
@@ -99,12 +115,12 @@ def test_embedding_provider_connectivity_or_fallback():
             f"Check modules/memory/config/.env credentials and network access."
         )
     else:
-        if is_ci:
+        if require_connectivity:
             pytest.fail(
-                f"CI requires embedding connectivity but no credentials detected for provider '{provider}'.\n"
-                f"Please set credentials in modules/memory/config/.env or CI secrets."
+                f"Embedding connectivity was explicitly required but no credentials detected for provider '{provider}'.\n"
+                f"Please set provider credentials in environment variables or CI secrets."
             )
         else:
             pytest.skip(
-                f"No credentials detected for provider '{provider}', only validated local fallback path."
+                f"No credentials detected for provider '{provider}', skipping real connectivity check in default CI/open-source runs."
             )

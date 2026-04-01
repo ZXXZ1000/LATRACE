@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from typing import List
 
 from modules.memory.contracts.memory_models import MemoryEntry
 

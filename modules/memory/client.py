@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Union
 
 from modules.memory.contracts.memory_models import MemoryEntry, Edge, SearchFilters
 from modules.memory.application.service import MemoryService
-from modules.memory.adapters.mem0_adapter import build_entries_from_mem0
 from modules.memory.application.fact_extractor_mem0 import build_fact_extractor_from_env
 from modules.memory.application.decider_mem0 import build_mem0_decider_from_env
 
@@ -130,7 +129,7 @@ class Memory:
             base_md["run_id"] = str(run_id)
 
         ents: List[MemoryEntry] = [e if isinstance(e, MemoryEntry) else MemoryEntry.model_validate(e) for e in entries]
-        lnks: Optional[List[Edge]] = [l if isinstance(l, Edge) else Edge.model_validate(l) for l in links] if links else None
+        lnks: Optional[List[Edge]] = [link if isinstance(link, Edge) else Edge.model_validate(link) for link in links] if links else None
         for e in ents:
             md = dict(e.metadata)
             md.update(base_md)

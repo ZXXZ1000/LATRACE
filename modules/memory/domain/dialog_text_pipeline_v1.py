@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from modules.memory.contracts.memory_models import Edge, MemoryEntry
 

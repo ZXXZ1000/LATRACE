@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import yaml
-from pathlib import Path
 
 
 def test_graph_rel_whitelist_contains_temporal_next(config_dir):

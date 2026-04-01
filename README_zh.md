@@ -123,6 +123,24 @@ docker compose up --build
 - 🔍 Qdrant 控制台: `http://localhost:6333`
 - 🕸️ Neo4j 可视化图谱: `http://localhost:7474`
 
+### 📦 方式 1.5：直接拉取已发布的 Docker 镜像
+
+如果你只想使用 LATRACE 的 Memory API 容器，可以直接从 GitHub Container Registry 拉取：
+
+```bash
+docker pull ghcr.io/zxxz1000/latrace-memory:latest
+docker run --rm -p 8000:8000 --env-file .env ghcr.io/zxxz1000/latrace-memory:latest
+```
+
+这个镜像里只包含应用服务本身，不包含 Qdrant 和 Neo4j，所以它们仍然需要单独启动，或者连接到你已经有的外部实例。
+
+## 🔁 CI / CD
+
+- Pull Request 会对 `modules/memory` 运行完整的 `ruff` 和 `pytest` 检查。
+- 依赖私有凭据的 embedding 连通性检查在开源默认 CI 中会跳过；如果你希望强制执行，请配置提供商凭据并设置 `REQUIRE_EMBEDDING_CONNECTIVITY=1`。
+- 合并到 `main` 后，会自动把 Docker 镜像发布到 GitHub Container Registry。
+- 你可以直接通过 `docker pull ghcr.io/zxxz1000/latrace-memory:latest` 获取最新镜像。
+
 ### 💻 方式二：纯本地开发环境配置
 
 ```bash

@@ -13,6 +13,7 @@ from modules.memory.contracts.memory_models import (
     SearchResult,
     Version,
 )
+from modules.memory.contracts.graph_models import GraphUpsertRequest
 from modules.memory.domain.governance import (
     compute_importance,
     compute_stability,
@@ -36,28 +37,6 @@ try:
     from rank_bm25 import BM25Okapi  # type: ignore
 except Exception:  # fallback when not installed
     BM25Okapi = None  # type: ignore
-
-try:
-    from modules.memory.infra.usage_wal import UsageWAL, UsageWALSettings
-    from modules.memory.contracts.usage_models import (
-        UsageEvent,
-        UsageSummary,
-        TokenUsageDetail,
-        EmbeddingUsage,
-        LLMUsage,
-    )
-    from modules.memory.application.llm_adapter import (
-        set_llm_usage_hook,
-        reset_llm_usage_hook,
-    )
-    from modules.memory.application.embedding_adapter import (
-        set_embedding_usage_hook,
-        reset_embedding_usage_hook,
-    )
-except ImportError:
-    # Just in case of circular dep or missing files during dev
-    pass
-
 
 class _SimpleBM25:
     """Minimal BM25 implementation used when rank_bm25 is unavailable.
@@ -2090,13 +2069,17 @@ class MemoryService:
                                     mult = 1
                                     s2 = s
                                     if s.endswith("s"):
-                                        mult = 1; s2 = s[:-1]
+                                        mult = 1
+                                        s2 = s[:-1]
                                     elif s.endswith("m"):
-                                        mult = 60; s2 = s[:-1]
+                                        mult = 60
+                                        s2 = s[:-1]
                                     elif s.endswith("h"):
-                                        mult = 3600; s2 = s[:-1]
+                                        mult = 3600
+                                        s2 = s[:-1]
                                     elif s.endswith("d"):
-                                        mult = 86400; s2 = s[:-1]
+                                        mult = 86400
+                                        s2 = s[:-1]
                                     return int(float(s2) * mult)
                                 except Exception:
                                     return md.get("ttl", 0)
@@ -2603,7 +2586,7 @@ class MemoryService:
     @staticmethod
     def _run_sync(coro):
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(coro)
 

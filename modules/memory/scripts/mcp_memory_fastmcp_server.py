@@ -74,7 +74,7 @@ def memory_write(entries_json: str, links_json: str | None = None, upsert: bool 
     """Write entries (and optional links). Params are JSON strings. Returns version JSON."""
     async def _run():
         entries = [MemoryEntry.model_validate(e) for e in json.loads(entries_json)]
-        links = [Edge.model_validate(l) for l in json.loads(links_json)] if links_json else None
+        links = [Edge.model_validate(link) for link in json.loads(links_json)] if links_json else None
         ver = await svc.write(entries, links, upsert=upsert)
         return json.dumps(ver.model_dump(), ensure_ascii=False)
 

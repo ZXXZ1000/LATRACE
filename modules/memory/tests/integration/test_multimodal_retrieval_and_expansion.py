@@ -13,7 +13,6 @@
 """
 
 import pytest
-from typing import Dict, Any, List
 
 from modules.memory.contracts.memory_models import MemoryEntry, Edge, SearchFilters
 from modules.memory.application.service import MemoryService
@@ -81,7 +80,7 @@ async def test_semantic_to_image_retrieval():
     assert md.get("clip_id") == 1.5, "时间锚点应保留"
     
     print("✅ 测试1通过：语义查询可以直接定位到图像节点")
-    print(f"  - 查询: '猫咪'")
+    print("  - 查询: '猫咪'")
     print(f"  - 召回: {hit.entry.modality} 节点 (id={hit.entry.id})")
     print(f"  - 描述: {hit.entry.contents[0]}")
     print(f"  - 元数据: scene={md.get('scene')}, objects={md.get('objects')}")
@@ -225,7 +224,7 @@ async def test_default_graph_expansion():
     assert "executed" in rel_types, "应包含executed关系"
     
     print("✅ 测试2通过：检索默认进行图扩展")
-    print(f"  - 查询: '打开电视'")
+    print("  - 查询: '打开电视'")
     print(f"  - 召回种子: {hit.id} ({hit.entry.modality})")
     print(f"  - 扩展邻居数: {len(neighbors_list)}")
     print(f"  - 邻居节点ID: {neighbor_ids}")
@@ -454,22 +453,22 @@ async def test_multimodal_completeness_after_expansion():
         if entry.id in neighbor_map:
             modalities_found.add(entry.modality)
     
-    print(f"\n【多模态覆盖】")
+    print("\n【多模态覆盖】")
     print(f"  - 扩展的模态类型: {modalities_found}")
     assert "image" in modalities_found, "应扩展出图像节点"
     assert "audio" in modalities_found, "应扩展出语音节点"
     assert "structured" in modalities_found, "应扩展出结构化节点（场景/物体）"
-    print(f"  ✓ 多模态完整性验证通过")
+    print("  ✓ 多模态完整性验证通过")
     
     # 验证关系类型多样性
     rel_types = {n["rel"] for n in neighbors_list}
-    print(f"\n【关系类型多样性】")
+    print("\n【关系类型多样性】")
     print(f"  - 关系类型: {rel_types}")
     assert "appears_in" in rel_types, "应包含appears_in（图像关系）"
     assert "said_by" in rel_types, "应包含said_by（语音关系）"
     assert "located_in" in rel_types, "应包含located_in（场景关系）"
     assert "co_occurs" in rel_types, "应包含co_occurs（共现关系）"
-    print(f"  ✓ 关系类型多样性验证通过")
+    print("  ✓ 关系类型多样性验证通过")
 
 
 @pytest.mark.anyio
@@ -537,11 +536,11 @@ async def test_fetch_expanded_node_full_metadata():
     neighbors_list = neighbors_dict.get(seed_id, [])
     
     print("\n✅ 测试4通过：如何获取扩展节点的完整元数据")
-    print(f"\n【方法1：从neighbors获取基本信息】")
+    print("\n【方法1：从neighbors获取基本信息】")
     for n in neighbors_list:
         print(f"  邻居: {n['to']}, 关系: {n['rel']}, 权重: {n['weight']}, 跳数: {n['hop']}")
     
-    print(f"\n【方法2：使用vector_store.get()获取完整metadata】")
+    print("\n【方法2：使用vector_store.get()获取完整metadata】")
     for n in neighbors_list:
         neighbor_id = n["to"]
         # 获取完整的MemoryEntry
@@ -559,10 +558,10 @@ async def test_fetch_expanded_node_full_metadata():
                 assert full_entry.metadata.get("objects") is not None
                 assert full_entry.metadata.get("character_id") is not None
     
-    print(f"\n【总结】")
-    print(f"  1. neighbors字典提供：邻居ID、关系类型、权重、跳数")
-    print(f"  2. 完整元数据需要：await vector_store.get(neighbor_id)")
-    print(f"  3. 多模态信息（scene/objects/character等）在完整metadata中")
+    print("\n【总结】")
+    print("  1. neighbors字典提供：邻居ID、关系类型、权重、跳数")
+    print("  2. 完整元数据需要：await vector_store.get(neighbor_id)")
+    print("  3. 多模态信息（scene/objects/character等）在完整metadata中")
 
 
 if __name__ == "__main__":

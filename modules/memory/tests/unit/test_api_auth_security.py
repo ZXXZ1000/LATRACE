@@ -71,7 +71,7 @@ async def _stub_model(payload: Dict[str, object]):
 
 def test_jwt_auth_allows_search(monkeypatch):
     secret = "supersecret"
-    jwks = {
+    {
         "keys": [
             {
                 "kty": "oct",

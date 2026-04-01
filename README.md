@@ -130,6 +130,24 @@ docker compose up --build
 - 🔍 Qdrant: `http://localhost:6333`
 - 🕸️ Neo4j Browser: `http://localhost:7474`
 
+### 📦 Option 1.5: Pull the Published Docker Image Directly
+
+If you only want the LATRACE Memory API container, you can pull the published image directly from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/zxxz1000/latrace-memory:latest
+docker run --rm -p 8000:8000 --env-file .env ghcr.io/zxxz1000/latrace-memory:latest
+```
+
+This image contains only the application service. Qdrant and Neo4j are not bundled inside the image, so you still need to run them separately or point the app to existing external instances.
+
+## 🔁 CI / CD
+
+- Pull requests run full `modules/memory` checks with `ruff` and `pytest`.
+- Secret-backed embedding connectivity is skipped by default in open-source CI. Set `REQUIRE_EMBEDDING_CONNECTIVITY=1` together with provider credentials if you want to enforce it.
+- Merges to `main` publish the Docker image to GitHub Container Registry.
+- You can pull the latest image directly with `docker pull ghcr.io/zxxz1000/latrace-memory:latest`.
+
 ### 💻 Option 2: Local Development
 
 ```bash

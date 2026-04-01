@@ -8,13 +8,9 @@ from collections import OrderedDict
 import threading
 
 from modules.memory.contracts.graph_models import (
-    Evidence,
-    Entity,
-    Event,
     GraphEdge,
     GraphUpsertRequest,
     MediaSegment,
-    Place,
     TimeSlice,
 )
 from modules.memory.infra.neo4j_store import Neo4jStore

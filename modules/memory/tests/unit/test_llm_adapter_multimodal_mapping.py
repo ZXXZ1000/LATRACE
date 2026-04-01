@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 
 from modules.memory.application.llm_adapter import _map_messages_for_multimodal
 

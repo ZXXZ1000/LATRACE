@@ -1,5 +1,4 @@
 from modules.memory.contracts.usage_models import UsageEvent, UsageSummary, TokenUsageDetail
-import pytest
 from datetime import datetime, timezone
 import uuid
 

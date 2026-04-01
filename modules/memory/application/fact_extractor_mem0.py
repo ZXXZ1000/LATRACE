@@ -98,7 +98,7 @@ def build_fact_extractor_from_env() -> Optional[Callable[[List[Dict[str, Any]]],
             # 3) 调用 LLM 要求 JSON
             try:
                 raw = adapter.generate([{"role": "user", "content": prompt}], response_format={"type": "json_object"})
-            except Exception as e:
+            except Exception:
                 # 网络或限流等异常时，抛出让上层测试可决定 skip
                 raise
             try:

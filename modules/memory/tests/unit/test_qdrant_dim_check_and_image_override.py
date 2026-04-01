@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 
-from types import SimpleNamespace
 from modules.memory.infra.qdrant_store import QdrantStore
 from modules.memory.contracts.memory_models import MemoryEntry
 

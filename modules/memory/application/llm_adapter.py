@@ -1060,7 +1060,7 @@ def build_llm_from_config(kind: str = "text") -> Optional[LLMAdapter]:
     # Build adapter via LiteLLM if not already set by provider-specific logic
     if adapter is None:
         try:
-            import litellm  # type: ignore
+            pass  # type: ignore
         except Exception:
             return None
 

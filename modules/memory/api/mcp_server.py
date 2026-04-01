@@ -12,7 +12,7 @@ Memory MCP 适配（最小可用）：
 - adapter.invoke("memory.search", {...}) → 调用并返回结果（dict）
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import json
 import os
 
@@ -73,7 +73,7 @@ class MemoryMCPAdapter:
         if name == "memory.write":
             entries = [MemoryEntry.model_validate(e) for e in params.get("entries", [])]
             links_raw = params.get("links") or []
-            links = [Edge.model_validate(l) for l in links_raw] if links_raw else None
+            links = [Edge.model_validate(link) for link in links_raw] if links_raw else None
             ver = await self.svc.write(entries, links, upsert=bool(params.get("upsert", True)))
             return {"version": ver.value}
 

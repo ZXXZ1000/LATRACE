@@ -15,7 +15,6 @@ Cycle11: 运行时热更新与指标导出体验脚本
 
 import asyncio
 import os
-import time
 import requests
 from dotenv import load_dotenv
 

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from modules.memory.application.config import get_dialog_v2_ranking_settings, load_memory_config

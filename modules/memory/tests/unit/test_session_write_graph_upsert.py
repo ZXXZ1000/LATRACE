@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from modules.memory.application.service import MemoryService
 from modules.memory.contracts.graph_models import GraphUpsertRequest

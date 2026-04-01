@@ -10,7 +10,6 @@ from modules.memory.infra.qdrant_store import QdrantStore
 from modules.memory.infra.neo4j_store import Neo4jStore
 from modules.memory.infra.audit_store import AuditStore
 from modules.memory.application.metrics import get_metrics
-from modules.memory.contracts.memory_models import SearchFilters
 
 
 async def main() -> None:

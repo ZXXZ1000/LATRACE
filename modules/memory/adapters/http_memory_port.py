@@ -119,7 +119,7 @@ class HttpMemoryPort:
             "return_id_map": bool(return_id_map),
         }
         if links:
-            payload["links"] = [l.model_dump(exclude_none=True) for l in links]
+            payload["links"] = [link.model_dump(exclude_none=True) for link in links]
 
         data = await self._request_json("POST", "/write", payload=payload)
         ver = Version.model_validate(data)

@@ -1,4 +1,3 @@
-import pytest
 from datetime import datetime
 from modules.memory.contracts.graph_models import (
     Provenance,

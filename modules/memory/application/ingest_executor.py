@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, Optional, Set, Tuple
+from typing import Awaitable, Callable, Dict, Optional, Set, Tuple
 import logging
 
 from modules.memory.infra.async_ingest_job_store import AsyncIngestJobStore, IngestJobRecord

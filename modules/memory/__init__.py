@@ -99,8 +99,11 @@ def __getattr__(name: str) -> Any:
         except ModuleNotFoundError as exc:  # pragma: no cover
             # Keep `modules.memory` importable in minimal envs.
             if getattr(exc, "name", None) in ("neo4j", "fastapi"):
+                missing_exc = exc
+
                 def _missing(*_args: Any, **_kwargs: Any) -> Any:
-                    raise RuntimeError("GraphService requires optional dependencies (neo4j backend).") from exc
+                    raise RuntimeError("GraphService requires optional dependencies (neo4j backend).") from missing_exc
+
                 return _missing
             raise
     if name == "create_service":
@@ -109,8 +112,11 @@ def __getattr__(name: str) -> Any:
             return _create_service
         except ModuleNotFoundError as exc:  # pragma: no cover
             if getattr(exc, "name", None) == "fastapi":
+                missing_exc = exc
+
                 def _missing(*_args: Any, **_kwargs: Any) -> Any:
-                    raise RuntimeError("create_service requires optional dependency 'fastapi'.") from exc
+                    raise RuntimeError("create_service requires optional dependency 'fastapi'.") from missing_exc
+
                 return _missing
             raise
     raise AttributeError(name)

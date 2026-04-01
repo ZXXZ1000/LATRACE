@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Dict, Set, Tuple
+from typing import Dict, Set
 
 
 def _collect_routes() -> Set[str]:

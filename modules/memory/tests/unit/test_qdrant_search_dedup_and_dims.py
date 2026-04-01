@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import asyncio
-import json
 
 from modules.memory.infra.qdrant_store import QdrantStore
 from modules.memory.contracts.memory_models import MemoryEntry

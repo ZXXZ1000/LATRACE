@@ -13,10 +13,9 @@ from modules.memory.contracts.memory_models import SearchFilters
 from modules.memory.application.metrics import inc
 from modules.memory.domain.dialog_tkg_vector_index_v1 import TKG_DIALOG_EVENT_INDEX_SOURCE_V1
 from modules.memory.ports.memory_port import MemoryPort
-import uuid
 try:
     from modules.memory.contracts.usage_models import (
-        UsageEvent, UsageSummary, TokenUsageDetail, EmbeddingUsage, LLMUsage
+        UsageEvent, UsageSummary, TokenUsageDetail, EmbeddingUsage
     )
     from modules.memory.application.llm_adapter import (
         set_llm_usage_hook, reset_llm_usage_hook
@@ -981,7 +980,7 @@ async def retrieval(
     - `dialog_v2`: Event-first parallel recall (event_vec + utterance index + entity/time routes) with dynamic fill
     - `dialog_v2_test`: Experimental dialog_v2 variant for route ablation and benchmark testing
     """
-    total_start = time.perf_counter()
+    time.perf_counter()
     strategy_norm = str(strategy or "").strip().lower()
     if strategy_norm not in ("dialog_v1", "dialog_v2", "dialog_v2_test"):
         raise ValueError(f"unsupported strategy: {strategy}")
@@ -1000,7 +999,6 @@ async def retrieval(
         else _DialogV2TestAblationContract()
     )
 
-    executed_calls: List[Dict[str, Any]] = []
     llm_events: List[Dict[str, Any]] = []
     embedding_events: List["EmbeddingUsage"] = []
     usage_wal = getattr(store, "usage_wal", None)

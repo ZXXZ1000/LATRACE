@@ -101,6 +101,63 @@ def test_openrouter_embedding_cost_is_not_null(monkeypatch):
     assert usage.cost_usd is not None
 
 
+def test_openai_embedder_honors_embed_concurrency(monkeypatch):
+    pytest.importorskip("openai")
+    from modules.memory.application import embedding_adapter as ea
+
+    observed = {"max_workers": None}
+
+    class _FakeResponse:
+        def __init__(self, texts):
+            self.data = [MagicMock(embedding=[float(idx), float(idx) + 0.5]) for idx, _ in enumerate(texts)]
+
+    class _FakeClient:
+        class embeddings:
+            @staticmethod
+            def create(**payload):
+                inputs = payload["input"]
+                if not isinstance(inputs, list):
+                    inputs = [inputs]
+                return _FakeResponse(inputs)
+
+    class _ImmediateFuture:
+        def __init__(self, value):
+            self._value = value
+
+        def result(self):
+            return self._value
+
+    class _ImmediateExecutor:
+        def __init__(self, *, max_workers):
+            observed["max_workers"] = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            return _ImmediateFuture(fn(*args, **kwargs))
+
+    monkeypatch.setattr("openai.OpenAI", lambda **_kwargs: _FakeClient())
+    monkeypatch.setattr(ea, "ThreadPoolExecutor", _ImmediateExecutor)
+    monkeypatch.setattr(ea, "as_completed", lambda futures: list(futures))
+
+    embedder = _build_openai_sdk_embedder(
+        model="test-model",
+        api_base="http://fake",
+        api_key="sk-fake",
+        dim=2,
+        embed_concurrency=3,
+    )
+    assert embedder is not None
+
+    vectors = embedder.encode_batch(["a", "b", "c"], bsz=1)  # type: ignore[attr-defined]
+    assert len(vectors) == 3
+    assert observed["max_workers"] == 3
+
+
 def test_build_llm_from_config_openai_compat_sets_custom_provider(monkeypatch):
     from modules.memory.application import config as cfgmod
     from modules.memory.application import llm_adapter as ladapter

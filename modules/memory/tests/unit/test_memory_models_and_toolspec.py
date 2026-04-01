@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from modules.memory.contracts.memory_models import MemoryEntry, Edge, SearchFilters
 

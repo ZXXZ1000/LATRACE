@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import pytest
 
 from modules.memory.application.service import MemoryService
 from modules.memory.application import runtime_config as rtconf
-from modules.memory.contracts.memory_models import MemoryEntry, Edge
+from modules.memory.contracts.memory_models import MemoryEntry
 from modules.memory.infra.inmem_vector_store import InMemVectorStore
 from modules.memory.infra.inmem_graph_store import InMemGraphStore
 from modules.memory.infra.audit_store import AuditStore

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from collections import defaultdict
+from typing import Any, Dict, List
 
 from modules.memory.contracts.memory_models import MemoryEntry
 

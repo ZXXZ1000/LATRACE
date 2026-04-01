@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from modules.memory.application.profiles import profile_m3_episodic, profile_mem0_fact, profile_ctrl_event
 

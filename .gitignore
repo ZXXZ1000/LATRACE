@@ -20,6 +20,9 @@ modules/memory/Devlope_PROCESS.md
 modules/memory/Module_Arc.md
 modules/memory/PROCESS.md
 modules/memory/README.md
+modules/control_agent/
+modules/memorization_agent/
+modules/shared/
 
 # Local secrets
 .env

@@ -13,7 +13,7 @@ Service adapters:
 Report: returns dict with accuracy@k, latency stats, and per-weight grid results.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 import json
 import time
 
@@ -33,7 +33,6 @@ class HttpService(ServiceAdapter):
         self._s = requests.Session()
 
     def search(self, query: str, *, topk: int = 10) -> List[Dict[str, Any]]:
-        import requests
         url = f"{self._base}/search"
         r = self._s.post(url, json={"query": query, "topk": int(topk), "expand_graph": True}, timeout=30)
         r.raise_for_status()

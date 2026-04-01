@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from modules.memory.application.service import MemoryService
 from modules.memory.application.ttl_jobs import run_ttl_cleanup
@@ -19,7 +19,7 @@ def test_update_and_soft_delete_and_hard_delete():
         svc = MemoryService(vec, graph, audit)
 
         e = MemoryEntry(kind="semantic", modality="text", contents=["偏好早上开窗"], metadata={"source": "mem0"})
-        v = await svc.write([e])
+        await svc.write([e])
         # get id back from store
         stored = vec.dump()
         assert len(stored) == 1

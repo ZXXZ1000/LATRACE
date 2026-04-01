@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import types
 
 from modules.memory.application.service import MemoryService
-from modules.memory.contracts.memory_models import MemoryEntry, Edge, SearchFilters
+from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
 from modules.memory.infra.inmem_vector_store import InMemVectorStore
 from modules.memory.infra.inmem_graph_store import InMemGraphStore
 from modules.memory.infra.audit_store import AuditStore
@@ -22,7 +21,7 @@ def test_graph_multihop_neighbor_expansion_inmem():
         B = MemoryEntry(kind="semantic", modality="text", contents=["B 节点"], metadata={"source": "mem0"})
         C = MemoryEntry(kind="semantic", modality="text", contents=["C 节点"], metadata={"source": "mem0"})
         await svc.write([A, B, C])
-        ids = list(vec.dump().keys())
+        list(vec.dump().keys())
         # find ids by content
         idA = next(i for i, e in vec.dump().items() if e.contents[0].startswith("A "))
         idB = next(i for i, e in vec.dump().items() if e.contents[0].startswith("B "))

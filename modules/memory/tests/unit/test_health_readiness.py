@@ -102,7 +102,9 @@ async def test_health_check_fails_when_openrouter_key_missing(monkeypatch, tmp_p
 async def test_health_check_fails_when_balance_low(monkeypatch, tmp_path) -> None:
     from modules.memory.application.service import MemoryService
     from modules.memory.infra.audit_store import AuditStore
-    import httpx, shutil, os
+    import httpx
+    import shutil
+    import os
     from collections import namedtuple
 
     class _FakeAsyncClient:
@@ -110,7 +112,8 @@ async def test_health_check_fails_when_balance_low(monkeypatch, tmp_path) -> Non
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def get(self, url: str, **kwargs):
-            if url.endswith("/auth/key"): return _Resp(200, {"data": {"label": "ok"}})
+            if url.endswith("/auth/key"):
+                return _Resp(200, {"data": {"label": "ok"}})
             if url.endswith("/credits"):
                 # Total 10, Usage 9.5 => Remaining 0.5 < 1.0
                 return _Resp(200, {"data": {"total_credits": 10.0, "total_usage": 9.5}})
@@ -136,7 +139,9 @@ async def test_health_check_fails_when_balance_low(monkeypatch, tmp_path) -> Non
 async def test_health_check_handles_credits_api_failure(monkeypatch, tmp_path) -> None:
     from modules.memory.application.service import MemoryService
     from modules.memory.infra.audit_store import AuditStore
-    import httpx, shutil, os
+    import httpx
+    import shutil
+    import os
     from collections import namedtuple
 
     class _FakeAsyncClient:
@@ -144,8 +149,10 @@ async def test_health_check_handles_credits_api_failure(monkeypatch, tmp_path) -
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def get(self, url: str, **kwargs):
-            if url.endswith("/auth/key"): return _Resp(200, {"data": {"label": "ok"}})
-            if url.endswith("/credits"): return _Resp(500, {}) # API Error
+            if url.endswith("/auth/key"):
+                return _Resp(200, {"data": {"label": "ok"}})
+            if url.endswith("/credits"):
+                return _Resp(500, {})  # API Error
             return _Resp(404)
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
@@ -167,7 +174,7 @@ async def test_health_check_handles_credits_api_failure(monkeypatch, tmp_path) -
 async def test_health_check_fails_when_disk_inaccessible(monkeypatch) -> None:
     from modules.memory.application.service import MemoryService
     from modules.memory.infra.audit_store import AuditStore
-    import shutil, os
+    import os
 
     # Emulate disk path not accessible
     monkeypatch.setattr(os, "access", lambda p, m: False)
@@ -180,8 +187,10 @@ async def test_health_check_fails_when_disk_inaccessible(monkeypatch) -> None:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def get(self, url: str, **kwargs):
-            if url.endswith("/auth/key"): return _Resp(200, {"data": {"label": "ok"}})
-            if url.endswith("/credits"): return _Resp(200, {"data": {"total_credits": 10, "total_usage": 0}})
+            if url.endswith("/auth/key"):
+                return _Resp(200, {"data": {"label": "ok"}})
+            if url.endswith("/credits"):
+                return _Resp(200, {"data": {"total_credits": 10, "total_usage": 0}})
             return _Resp(404)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
@@ -197,7 +206,10 @@ async def test_health_check_fails_when_disk_inaccessible(monkeypatch) -> None:
 async def test_health_check_timestamp_format(monkeypatch, tmp_path) -> None:
     from modules.memory.application.service import MemoryService
     from modules.memory.infra.audit_store import AuditStore
-    import httpx, shutil, os, collections
+    import httpx
+    import shutil
+    import os
+    import collections
     
     # Mock everything to OK
     class _FakeAsyncClient:
@@ -224,7 +236,6 @@ async def test_health_check_timestamp_format(monkeypatch, tmp_path) -> None:
 @pytest.mark.anyio
 async def test_health_http_returns_503_when_unhealthy(monkeypatch, tmp_path) -> None:
     import importlib
-    import sys
     from fastapi.testclient import TestClient
 
     srv = importlib.import_module("modules.memory.api.server")

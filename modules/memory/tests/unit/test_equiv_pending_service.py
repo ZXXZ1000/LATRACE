@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 from modules.memory.application.service import MemoryService
 
@@ -79,7 +79,7 @@ def test_equiv_pending_service_flow():
 def _run_async(coro):  # type: ignore[no-untyped-def]
     import asyncio
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
     # run in a new loop in thread to avoid nested event loop issues
@@ -93,6 +93,6 @@ def _run_async(coro):  # type: ignore[no-untyped-def]
             nl.close()
     import threading
     t = threading.Thread(target=_w)
-    t.start(); t.join()
+    t.start()
+    t.join()
     return result["value"]
-

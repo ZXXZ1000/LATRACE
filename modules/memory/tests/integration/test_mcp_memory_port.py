@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import pytest
 
 from modules.memory.api.mcp_server import MemoryMCPAdapter

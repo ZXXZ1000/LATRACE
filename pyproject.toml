@@ -62,3 +62,6 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.ruff.lint]
+ignore = ["E402"]

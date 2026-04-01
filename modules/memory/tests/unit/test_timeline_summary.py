@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import pytest
 from typing import Any, Dict
 
 from modules.memory.application.service import MemoryService
-from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters, Hit, SearchResult
+from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
 
 
 class _VecStub:

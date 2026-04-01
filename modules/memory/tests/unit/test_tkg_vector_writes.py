@@ -2,10 +2,8 @@
 import asyncio
 import hashlib
 import uuid
-from typing import Any, Dict, List
-from unittest.mock import MagicMock, AsyncMock
+from typing import Any, List
 
-import pytest
 
 from modules.memory.application.graph_service import GraphService
 from modules.memory.contracts.graph_models import (
@@ -13,7 +11,6 @@ from modules.memory.contracts.graph_models import (
     Event,
     GraphUpsertRequest,
 )
-from modules.memory.infra.neo4j_store import Neo4jStore
 
 
 def _expected_uuid(prefix: str, node_id: str) -> str:

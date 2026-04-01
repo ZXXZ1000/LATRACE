@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 
 from modules.memory.application.graph_service import GraphService
 from modules.memory.contracts.graph_models import (

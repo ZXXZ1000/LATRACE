@@ -9,7 +9,7 @@ from modules.memory.application.metrics import get_metrics
 from modules.memory.application.config import load_memory_config
 from modules.memory.adapters.mem0_adapter import build_entries_from_mem0
 from modules.memory.adapters.m3_adapter import build_entries_from_m3
-from modules.memory.contracts.memory_models import MemoryEntry, Edge, SearchFilters
+from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
 from modules.memory.infra.qdrant_store import QdrantStore
 from modules.memory.infra.neo4j_store import Neo4jStore
 from modules.memory.infra.audit_store import AuditStore

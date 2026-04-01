@@ -7,9 +7,7 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from modules.memory.infra.pg_ingest_job_store import (
     PgIngestJobStore,

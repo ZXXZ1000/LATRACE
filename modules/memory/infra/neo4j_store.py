@@ -4412,7 +4412,7 @@ RETURN count(ev) AS deleted
                     if not e.id:
                         continue
                     did_work = True
-                    label = _label_for(e)
+                    _label_for(e)
                     text = e.contents[0] if e.contents else None
                     md = dict(e.metadata)
                     md_tenant = str(md.get("tenant_id") or "").strip()

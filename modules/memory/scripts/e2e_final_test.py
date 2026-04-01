@@ -35,13 +35,10 @@ if project_root not in sys.path:
 from dotenv import load_dotenv
 
 from modules.memory.api.server import create_service
-from modules.memory.application.service import MemoryService, SafetyError
+from modules.memory.application.service import SafetyError
 from modules.memory.application import runtime_config as rtconf
-from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters, Edge
+from modules.memory.contracts.memory_models import MemoryEntry, SearchFilters
 from modules.memory.adapters.mem0_adapter import build_entries_from_mem0
-from modules.memory.infra.inmem_vector_store import InMemVectorStore
-from modules.memory.infra.inmem_graph_store import InMemGraphStore
-from modules.memory.infra.audit_store import AuditStore
 
 
 def pct(values: List[float], p: float) -> float:

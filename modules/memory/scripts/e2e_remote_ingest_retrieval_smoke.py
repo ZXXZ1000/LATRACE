@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 import time
 import uuid
 from dataclasses import dataclass

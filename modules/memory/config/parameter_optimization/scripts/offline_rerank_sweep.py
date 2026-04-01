@@ -313,7 +313,7 @@ def evaluate_config(query_records: Sequence[QueryRecord], config: Dict[str, floa
             for event_id in candidate.evaluation_event_ids
         )
         selected_context_ids = _stable_unique(event_ids_to_dia_ids(query.sample_id, list(selected_event_ids)))
-        gold_event_ids = set(query.gold_event_ids)
+        set(query.gold_event_ids)
         gold_context_ids = set(query.gold_context_ids)
         support_hits = sum(1 for event_id in query.gold_event_ids if event_id in set(selected_event_ids))
         support_recall = (float(support_hits) / float(len(query.gold_event_ids))) if query.gold_event_ids else 1.0

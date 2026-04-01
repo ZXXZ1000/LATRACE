@@ -103,6 +103,7 @@ def _build_openai_sdk_embedder(
     api_base: Optional[str],
     api_key: Optional[str],
     dim: int,
+    embed_concurrency: Optional[int] = None,
 ) -> Optional[Callable[[str], List[float]]]:
     """通过 OpenAI 官方 SDK 访问兼容端点（DashScope/Qwen 等）。"""
     try:
@@ -426,11 +427,10 @@ def _build_openai_sdk_embedder(
         if "dashscope.aliyuncs.com" in base:
             b = min(b, 10)
         try:
-            embed_conc = int((cfg.get("embed_concurrency") if cfg else 0) or 0)
+            embed_conc = int(embed_concurrency or 0)
         except Exception:
             embed_conc = 0
-        if embed_conc <= 0:
-            embed_conc = 1
+        embed_conc = max(1, embed_conc or 1)
 
         if client is None:
             def _run_chunk(chunk: List[str]) -> List[List[float]]:
@@ -655,7 +655,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
             or os.getenv("OPENAI_API_KEY")
         )
         mdl = model or os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=cfg.get("embed_concurrency"),
+        )
         if fn is not None:
             return fn
 
@@ -675,7 +681,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
         ]
         api_key = _sanitize_placeholder(next((v for v in api_key_candidates if v), None))
         mdl = model or "text-embedding-v2"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=cfg.get("embed_concurrency"),
+        )
         if fn is not None:
             return fn
 
@@ -696,7 +708,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
         api_key = _sanitize_placeholder(next((v for v in api_key_candidates if v), None))
         # OpenRouter 支持的 embedding 模型，默认使用 OpenAI text-embedding-3-large
         mdl = model or os.getenv("OPENROUTER_EMBEDDING_MODEL") or "openai/text-embedding-3-large"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=cfg.get("embed_concurrency"),
+        )
         if fn is not None:
             return fn
 
@@ -766,7 +784,6 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
         def _encode_one(text: str) -> List[float]:
             try:
                 if st_model is not None:
-                    import numpy as _np  # type: ignore
                     v = st_model.encode([text], batch_size=1, normalize_embeddings=False, show_progress_bar=False)
                     vec = v[0].tolist()
                 elif hf_model is not None and hf_tokenizer is not None:
@@ -803,7 +820,6 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
             out: List[List[float]] = []
             try:
                 if st_model is not None:
-                    import numpy as _np  # type: ignore
                     for i in range(0, len(texts), b):
                         chunk = texts[i:i + b]
                         arr = st_model.encode(chunk, batch_size=b, normalize_embeddings=False, show_progress_bar=False)
@@ -867,7 +883,8 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
 
     # fallback
     # fallback
-    fn_fallback = lambda text: _hash_embed(text, dim)
+    def fn_fallback(text):
+        return _hash_embed(text, dim)
 
     # Wrap the chosen embedder with a small LRU cache to avoid repeated HTTP calls for identical texts
     from functools import lru_cache
@@ -916,7 +933,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
             or os.getenv("OPENAI_API_KEY")
         )
         mdl = (settings.get("model") if settings else None) or os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=(settings or {}).get("embed_concurrency"),
+        )
         if fn is not None:
             chosen = fn
     elif provider in {"qwen", "dashscope", "aliyun"}:
@@ -929,7 +952,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
         ]
         api_key = _sanitize_placeholder(next((v for v in api_key_candidates if v), None))
         mdl = (settings or {}).get("model") or "text-embedding-v2"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=(settings or {}).get("embed_concurrency"),
+        )
         if fn is not None:
             chosen = fn
     elif provider in {"openrouter", "open_router"}:
@@ -941,7 +970,13 @@ def build_embedding_from_settings(settings: Optional[Dict[str, Any]] = None) -> 
         ]
         api_key = _sanitize_placeholder(next((v for v in api_key_candidates if v), None))
         mdl = (settings or {}).get("model") or os.getenv("OPENROUTER_EMBEDDING_MODEL") or "openai/text-embedding-3-large"
-        fn = _build_openai_sdk_embedder(mdl, api_base=api_base, api_key=api_key, dim=dim)
+        fn = _build_openai_sdk_embedder(
+            mdl,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+            embed_concurrency=(settings or {}).get("embed_concurrency"),
+        )
         if fn is not None:
             chosen = fn
     elif provider == "gemini" and (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
@@ -1012,14 +1047,16 @@ def build_image_embedding_from_settings(settings: Optional[Dict[str, Any]] = Non
         try:
             if s.startswith("data:image/") and ";base64," in s:
                 b64 = s.split(",", 1)[1]
-                import base64, io
+                import base64
+                import io
                 raw = base64.b64decode(b64)
                 return _state["Image"].open(io.BytesIO(raw)).convert("RGB")
         except Exception:
             pass
         # try plain base64
         try:
-            import base64, io
+            import base64
+            import io
             if len(s) > 256 and all(c.isalnum() or c in "+/=\n\r" for c in s.strip()):
                 raw = base64.b64decode(s)
                 return _state["Image"].open(io.BytesIO(raw)).convert("RGB")
@@ -1087,7 +1124,8 @@ def build_image_embedding_from_settings(settings: Optional[Dict[str, Any]] = Non
             imgs = []  # tuples (pos, PIL)
             txts = []  # tuples (pos, str)
             from PIL import Image as _Image  # type: ignore
-            import base64 as _b64, io as _io
+            import base64 as _b64
+            import io as _io
             for i, s in enumerate(contents or []):
                 im = None
                 # try data URL
@@ -1172,8 +1210,9 @@ def build_audio_embedding_from_settings(settings: Optional[Dict[str, Any]] = Non
     可通过 settings = {"provider": "eres2net", "model": "...", "dim": 256} 扩展真实嵌入。
     """
     cfg = settings or {}
-    provider = (cfg.get("provider") or os.getenv("AUDIO_EMBEDDING_PROVIDER") or "").lower()
-    model = cfg.get("model") or os.getenv("AUDIO_EMBEDDING_MODEL") or ""
     dim = int(cfg.get("dim") or os.getenv("AUDIO_EMBEDDING_DIM") or 256)
     # TODO: 接入真实语音嵌入（ERes2NetV2 等）。此处先回退哈希嵌入。
-    return lambda text: _hash_embed(text, dim)
+    def _audio_fallback(text: str) -> List[float]:
+        return _hash_embed(text, dim)
+
+    return _audio_fallback

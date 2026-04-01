@@ -8,7 +8,7 @@ L4/L5 检索对标（InMem 版逻辑回归）：
   “聚会对话检测” 与 “无出门日” 两类否定/语义场景的最小可实现性。
 """
 
-from typing import Any, Dict, List
+from typing import List
 
 import pytest
 

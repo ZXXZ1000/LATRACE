@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 
 from modules.memory.scripts.create_neo4j_indexes import build_index_statements
 from modules.memory.scripts.verify_qdrant_collections import plan_checks_from_config, _load_memory_config

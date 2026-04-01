@@ -4,7 +4,7 @@ import argparse
 import json
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 from modules.memory.application.config import load_memory_config
 from modules.memory.application.topic_normalizer import TopicNormalizer

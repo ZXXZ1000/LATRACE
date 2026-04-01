@@ -86,7 +86,6 @@ async def test_equivalence_not_expanded_when_whitelist_excludes():
 async def test_scope_filter_blocks_and_allows_when_config_toggles():
     svc = _svc_with_inmem()
     scope_a = {"user_id": ["u"], "memory_domain": "d", "run_id": "rA"}
-    scope_b = {"user_id": ["u"], "memory_domain": "d", "run_id": "rB"}
 
     rtconf.set_graph_params(
         rel_whitelist=["equivalence"],
