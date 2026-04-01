@@ -41,6 +41,14 @@ memory:
         clip_image: 0.85
     transport:
       use_async_http: false  # 默认关闭，按灰度/压测结果显式开启
+    sharding:
+      enabled: false
+      method: custom
+      key_field: tenant_id
+      shard_number: 1
+      replication_factor: 1
+      write_consistency_factor: 1
+      namespace_ids_by_tenant: true
 
   # ---- Graph store (Neo4j) ----
   # 说明：图数据库配置，用于实体/事件/关系查询与邻域展开。

@@ -59,6 +59,15 @@ class LongMemEvalItem:
     answer_session_ids: List[str]
 
 
+@dataclass(frozen=True)
+class WorkloadItem:
+    tenant_id: str
+    tenant_index: int
+    session_id: str
+    user_id: str
+    item: LongMemEvalItem
+
+
 def _parse_longmemeval_datetime(dt_str: str) -> datetime:
     """
     LongMemEval date examples:
@@ -143,6 +152,54 @@ def _load_subset_items(path: Path) -> Tuple[Dict[str, Any], List[LongMemEvalItem
     return meta, items
 
 
+def _safe_label(value: str) -> str:
+    out = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
+    return out or "default"
+
+
+def _build_tenant_ids(*, tenant: str, tenant_count: int, tenant_prefix: str) -> List[str]:
+    count = max(1, int(tenant_count or 1))
+    base = str(tenant or "").strip() or "bench-tenant"
+    if count <= 1:
+        return [base]
+    prefix = str(tenant_prefix or "").strip() or f"{base}-t"
+    return [f"{prefix}{idx:03d}" for idx in range(count)]
+
+
+def build_workload_items(
+    *,
+    items: Sequence[LongMemEvalItem],
+    tenant: str,
+    tenant_count: int,
+    tenant_prefix: str,
+    user_prefix: str,
+    session_id_mode: str,
+    limit: int,
+) -> List[WorkloadItem]:
+    selected = list(items)[: max(0, int(limit))]
+    tenants = _build_tenant_ids(tenant=tenant, tenant_count=tenant_count, tenant_prefix=tenant_prefix)
+    mode = str(session_id_mode or "tenant_prefixed").strip().lower()
+    if mode not in {"tenant_prefixed", "shared"}:
+        mode = "tenant_prefixed"
+    out: List[WorkloadItem] = []
+    for tenant_index, tenant_id in enumerate(tenants):
+        tenant_label = _safe_label(tenant_id)
+        for item in selected:
+            qid = str(item.question_id)
+            session_id = qid if mode == "shared" else f"{tenant_label}::{qid}"
+            user_id = f"{str(user_prefix)}{tenant_label}_{qid}"
+            out.append(
+                WorkloadItem(
+                    tenant_id=str(tenant_id),
+                    tenant_index=int(tenant_index),
+                    session_id=session_id,
+                    user_id=user_id,
+                    item=item,
+                )
+            )
+    return out
+
+
 def build_turns_for_session_write(item: LongMemEvalItem) -> List[Dict[str, Any]]:
     hs = list(item.haystack_sessions or [])
     hs_ids = list(item.haystack_session_ids or [])
@@ -196,6 +253,8 @@ def build_service_from_env() -> MemoryService:
             "api_key": str(q_api),
             "collections": vcfg.get("collections", {"text": "memory_text", "image": "memory_image", "audio": "memory_audio"}),
             "embedding": vcfg.get("embedding", {}),
+            "transport": vcfg.get("transport", {}),
+            "sharding": vcfg.get("sharding", {}),
             "reliability": rcfg,
         }
     )
@@ -297,8 +356,11 @@ async def run_ingest(
     svc: MemoryService,
     items: Sequence[LongMemEvalItem],
     tenant_id: str,
+    tenant_count: int,
+    tenant_prefix: str,
     memory_domain: str,
     user_prefix: str,
+    session_id_mode: str,
     overwrite_existing: bool,
     extract: bool,
     reuse_facts_from_artifacts: bool,
@@ -312,7 +374,16 @@ async def run_ingest(
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    total_items = min(int(limit), len(items))
+    workload = build_workload_items(
+        items=items,
+        tenant=str(tenant_id),
+        tenant_count=int(tenant_count),
+        tenant_prefix=str(tenant_prefix),
+        user_prefix=str(user_prefix),
+        session_id_mode=str(session_id_mode),
+        limit=int(limit),
+    )
+    total_items = len(workload)
     out_path.write_text("", encoding="utf-8")
     lock = asyncio.Lock()
     sem = asyncio.Semaphore(max(1, int(concurrency or 1)))
@@ -336,6 +407,9 @@ async def run_ingest(
         facts: list[dict] = []
         prior = Path(reuse_artifact_dir) / f"{qid}.json"
         if not prior.exists():
+            matches = sorted(Path(reuse_artifact_dir).glob(f"*__{_safe_label(qid)}.json"))
+            prior = matches[0] if matches else prior
+        if not prior.exists():
             trace.append({"stage": "reuse_facts_missing"})
             return facts, trace
         try:
@@ -349,8 +423,11 @@ async def run_ingest(
             trace.append({"stage": "reuse_facts_error", "error": f"{type(exc).__name__}: {str(exc)[:240]}"})
             return facts, trace
 
-    def _ingest_one_sync(it: LongMemEvalItem) -> Dict[str, Any]:
-        user_id = f"{str(user_prefix)}{it.question_id}"
+    def _ingest_one_sync(work: WorkloadItem) -> Dict[str, Any]:
+        it = work.item
+        user_id = str(work.user_id)
+        session_id = str(work.session_id)
+        tenant_value = str(work.tenant_id)
         turns = build_turns_for_session_write(it)
         reference_time_iso = _parse_longmemeval_datetime(it.question_date).isoformat()
 
@@ -375,7 +452,7 @@ async def run_ingest(
                     extract_trace.append(dict(payload))
 
                 base_extractor = build_dialog_tkg_unified_extractor_v1_from_env(
-                    session_id=str(it.question_id),
+                    session_id=session_id,
                     reference_time_iso=str(reference_time_iso),
                     trace_hook=_trace_hook,
                     trace_include_context=bool(os.getenv("LONGMEMEVAL_TRACE_INCLUDE_CONTEXT") == "1"),
@@ -401,9 +478,9 @@ async def run_ingest(
         async def _call() -> Dict[str, Any]:
             return await session_write(
                 svc_t,
-                tenant_id=str(tenant_id),
+                tenant_id=tenant_value,
                 user_tokens=[user_id],
-                session_id=str(it.question_id),
+                session_id=session_id,
                 turns=turns,
                 memory_domain=str(memory_domain),
                 overwrite_existing=bool(overwrite_existing),
@@ -421,13 +498,15 @@ async def run_ingest(
         except Exception as exc:
             res = {
                 "status": "failed",
-                "session_id": str(it.question_id),
+                "session_id": session_id,
                 "trace": {"error": f"{type(exc).__name__}: {str(exc)[:240]}", "elapsed_s": time.time() - started},
             }
 
         return {
-            "item": it,
+            "workload": work,
             "user_id": user_id,
+            "session_id": session_id,
+            "tenant_id": tenant_value,
             "turns": turns,
             "reference_time_iso": reference_time_iso,
             "extract_trace": extract_trace,
@@ -435,28 +514,34 @@ async def run_ingest(
             "session_write": res,
         }
 
-    async def _run_one(it: LongMemEvalItem) -> None:
+    async def _run_one(work: WorkloadItem) -> None:
         nonlocal completed
         async with sem:
-            result = await asyncio.to_thread(_ingest_one_sync, it)
-            it0: LongMemEvalItem = result["item"]
+            result = await asyncio.to_thread(_ingest_one_sync, work)
+            work0: WorkloadItem = result["workload"]
+            it0: LongMemEvalItem = work0.item
             user_id = str(result["user_id"])
+            session_id = str(result["session_id"])
+            tenant_value = str(result["tenant_id"])
             turns = list(result["turns"])
             reference_time_iso = str(result["reference_time_iso"])
             extract_trace = list(result["extract_trace"])
             extracted_facts = list(result["extracted_facts"])
             res = result["session_write"]
 
-            artifact_path = artifact_dir / f"{it0.question_id}.json"
+            artifact_label = f"{_safe_label(tenant_value)}__{_safe_label(session_id)}"
+            artifact_path = artifact_dir / f"{artifact_label}.json"
             artifact: Dict[str, Any] = {
                 "question_id": it0.question_id,
                 "question_type": it0.question_type,
                 "question": it0.question,
                 "question_date": it0.question_date,
                 "ground_truth": it0.answer,
-                "tenant_id": str(tenant_id),
+                "tenant_id": tenant_value,
+                "tenant_index": int(work0.tenant_index),
                 "memory_domain": str(memory_domain),
                 "user_id": str(user_id),
+                "session_id": session_id,
                 "facts_source": ("llm" if bool(extract) else ("reuse" if bool(reuse_facts_from_artifacts) else "none")),
                 "extract_trace": list(extract_trace),
                 "extracted_facts": list(extracted_facts),
@@ -467,8 +552,8 @@ async def run_ingest(
                 from modules.memory.domain.dialog_tkg_graph_v1 import build_dialog_graph_upsert_v1
 
                 g = build_dialog_graph_upsert_v1(
-                    tenant_id=str(tenant_id),
-                    session_id=str(it0.question_id),
+                    tenant_id=tenant_value,
+                    session_id=session_id,
                     user_tokens=[user_id],
                     turns=list(turns),
                     memory_domain=str(memory_domain),
@@ -476,6 +561,7 @@ async def run_ingest(
                     turn_marks_by_index=None,
                     reference_time_iso=str(reference_time_iso),
                     turn_interval_seconds=60,
+                    tenant_scoped_fact_ids=bool(getattr(svc.vectors, "tenant_scoped_ids_enabled", lambda: False)()),
                 )
                 req = g.request
                 try:
@@ -495,6 +581,9 @@ async def run_ingest(
             row = {
                 "question_id": it0.question_id,
                 "question_type": it0.question_type,
+                "tenant_id": tenant_value,
+                "session_id": session_id,
+                "user_id": user_id,
                 "artifact_path": str(artifact_path),
                 "artifact_sha256": sha,
                 "session_write": res,
@@ -507,7 +596,7 @@ async def run_ingest(
                 if completed == 1 or completed == total_items or completed % 10 == 0:
                     print(f"ingest progress {completed}/{total_items}", flush=True)
 
-    await asyncio.gather(*[_run_one(it) for it in list(items)[:total_items]])
+    await asyncio.gather(*[_run_one(work) for work in workload])
 
 
 async def run_benchmark(
@@ -515,8 +604,11 @@ async def run_benchmark(
     svc: MemoryService,
     items: Sequence[LongMemEvalItem],
     tenant_id: str,
+    tenant_count: int,
+    tenant_prefix: str,
     memory_domain: str,
     user_prefix: str,
+    session_id_mode: str,
     topk: int,
     strategy: str,
     backend: str,
@@ -540,7 +632,16 @@ async def run_benchmark(
     rows: List[Dict[str, Any]] = []
     lock = asyncio.Lock()
     sem = asyncio.Semaphore(max(1, int(concurrency or 1)))
-    total_items = min(int(limit), len(items))
+    workload = build_workload_items(
+        items=items,
+        tenant=str(tenant_id),
+        tenant_count=int(tenant_count),
+        tenant_prefix=str(tenant_prefix),
+        user_prefix=str(user_prefix),
+        session_id_mode=str(session_id_mode),
+        limit=int(limit),
+    )
+    total_items = len(workload)
     completed = 0
     started = asyncio.get_event_loop().time()
     last_print = 0
@@ -577,10 +678,13 @@ async def run_benchmark(
             task_msg = ""
         print(f"progress {completed}/{total_items} total_ms={total_ms:.1f}{acc_msg}{task_msg}", flush=True)
 
-    async def _run_one(it: LongMemEvalItem) -> None:
+    async def _run_one(work: WorkloadItem) -> None:
         nonlocal completed, judged_total, judged_correct, by_type_running
         async with sem:
-            user_id = f"{str(user_prefix)}{it.question_id}"
+            it = work.item
+            user_id = str(work.user_id)
+            tenant_value = str(work.tenant_id)
+            session_id = str(work.session_id)
             score_meta: Dict[str, Any] = {}
             res: Dict[str, Any] = {}
             pred = ""
@@ -591,13 +695,13 @@ async def run_benchmark(
                 th = {"question_date": str(it.question_date)} if bool(use_question_date_hint) else None
                 res = await retrieval(
                     svc,
-                    tenant_id=str(tenant_id),
+                    tenant_id=tenant_value,
                     user_tokens=[user_id],
                     query=str(it.question),
                     strategy=str(strategy),
                     memory_domain=str(memory_domain),
                     user_match="all",
-                    run_id=str(it.question_id),
+                    run_id=session_id,
                     topk=int(topk),
                     debug=True,
                     with_answer=bool(with_answer),
@@ -630,6 +734,10 @@ async def run_benchmark(
             row: Dict[str, Any] = {
                 "question_id": it.question_id,
                 "question_type": it.question_type,
+                "tenant_id": tenant_value,
+                "tenant_index": int(work.tenant_index),
+                "session_id": session_id,
+                "user_id": user_id,
                 "question": it.question,
                 "ground_truth": it.answer,
                 "pred_answer": pred,
@@ -659,7 +767,7 @@ async def run_benchmark(
                 _maybe_print_progress()
 
     out_path.write_text("", encoding="utf-8")
-    await asyncio.gather(*[_run_one(it) for it in list(items)[:total_items]])
+    await asyncio.gather(*[_run_one(work) for work in workload])
     return {"summary": _summarize_accuracy(rows), "rows": len(rows), "judge_used": bool(judge is not None)}
 
 
@@ -673,8 +781,22 @@ def main() -> int:
     )
     ap.add_argument("--mode", type=str, default="all", choices=["ingest", "benchmark", "all"])
     ap.add_argument("--tenant", type=str, default="bench-longmemeval-oracle-200-seed42")
+    ap.add_argument("--tenant-count", type=int, default=1, help="Number of isolated tenants to generate in the workload.")
+    ap.add_argument(
+        "--tenant-prefix",
+        type=str,
+        default="",
+        help="Tenant prefix when --tenant-count > 1 (default: <tenant>-t).",
+    )
     ap.add_argument("--memory-domain", type=str, default="longmemeval_oracle")
     ap.add_argument("--user-prefix", type=str, default="lm_user_")
+    ap.add_argument(
+        "--session-id-mode",
+        type=str,
+        default="tenant_prefixed",
+        choices=["tenant_prefixed", "shared"],
+        help="Use tenant-prefixed session ids by default to avoid cross-tenant point-id collisions in stress runs.",
+    )
     ap.add_argument(
         "--config-profile",
         type=str,
@@ -774,7 +896,23 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     audit_db = Path(str(args.audit_db)).expanduser().resolve() if str(args.audit_db).strip() else (out_dir / "audit.db")
     os.environ["MEMORY_AUDIT_SQLITE_PATH"] = str(audit_db)
-    (out_dir / "meta.json").write_text(json.dumps({"subset_meta": meta}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "subset_meta": meta,
+                "workload": {
+                    "tenant": str(args.tenant),
+                    "tenant_count": int(args.tenant_count),
+                    "tenant_prefix": str(args.tenant_prefix),
+                    "session_id_mode": str(args.session_id_mode),
+                    "limit_per_tenant": int(limit),
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     svc = build_service_from_env()
 
@@ -791,8 +929,11 @@ def main() -> int:
                 svc=svc,
                 items=items,
                 tenant_id=str(args.tenant),
+                tenant_count=int(args.tenant_count),
+                tenant_prefix=str(args.tenant_prefix),
                 memory_domain=str(args.memory_domain),
                 user_prefix=str(args.user_prefix),
+                session_id_mode=str(args.session_id_mode),
                 overwrite_existing=bool(args.overwrite_existing),
                 extract=bool(args.extract),
                 reuse_facts_from_artifacts=bool(args.reuse_facts_from_artifacts),
@@ -816,8 +957,11 @@ def main() -> int:
                 svc=svc,
                 items=items,
                 tenant_id=str(args.tenant),
+                tenant_count=int(args.tenant_count),
+                tenant_prefix=str(args.tenant_prefix),
                 memory_domain=str(args.memory_domain),
                 user_prefix=str(args.user_prefix),
+                session_id_mode=str(args.session_id_mode),
                 topk=int(args.topk),
                 strategy=str(args.strategy),
                 backend=str(args.backend),

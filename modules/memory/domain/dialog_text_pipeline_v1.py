@@ -34,6 +34,19 @@ def generate_uuid(namespace: str, name: str) -> str:
     return str(uuid.uuid5(ns, name))
 
 
+def build_fact_uuid(
+    *,
+    sample_id: str,
+    fact_idx: int,
+    tenant_id: str | None = None,
+    namespace_by_tenant: bool = False,
+) -> str:
+    logical_id = f"fact:{str(sample_id)}:{int(fact_idx)}"
+    if namespace_by_tenant and str(tenant_id or "").strip():
+        logical_id = f"tenant:{str(tenant_id).strip()}|{logical_id}"
+    return generate_uuid("locomo.facts", logical_id)
+
+
 def normalize_importance(value: Any) -> float:
     if value is None:
         return 0.5
@@ -204,8 +217,7 @@ def fact_item_to_entry(
 
     sample_id = str(fact.get("source_sample_id") or fact.get("sample_id") or "").strip()
     user_id = f"{user_prefix}{sample_id}" if sample_id else None
-    logical_id = f"fact:{sample_id}:{int(fact_idx)}"
-    fact_uuid = generate_uuid("locomo.facts", logical_id)
+    fact_uuid = build_fact_uuid(sample_id=sample_id, fact_idx=int(fact_idx), tenant_id=str(tenant_id))
 
     entry = MemoryEntry(
         kind="semantic",

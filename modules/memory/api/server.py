@@ -360,6 +360,8 @@ def create_service() -> MemoryService:
         "api_key": _resolve_env_like_str(q_api, ""),
         "collections": vcfg.get("collections", {"text": "memory_text", "image": "memory_image", "audio": "memory_audio"}),
         "embedding": vcfg.get("embedding", {}),
+        "transport": vcfg.get("transport", {}),
+        "sharding": vcfg.get("sharding", {}),
         "reliability": rcfg,
     })
 

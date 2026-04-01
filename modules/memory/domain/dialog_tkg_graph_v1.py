@@ -14,7 +14,7 @@ from modules.memory.contracts.graph_models import (
     TimeSlice,
     UtteranceEvidence,
 )
-from modules.memory.domain.dialog_text_pipeline_v1 import generate_uuid, make_event_id
+from modules.memory.domain.dialog_text_pipeline_v1 import build_fact_uuid, generate_uuid, make_event_id
 from modules.memory.application.topic_normalizer import enqueue_deferred_event, get_normalization_mode
 
 
@@ -78,6 +78,7 @@ def build_dialog_graph_upsert_v1(
     reference_time_iso: Optional[str] = None,
     turn_interval_seconds: int = 60,
     source_id: Optional[str] = None,
+    tenant_scoped_fact_ids: bool = False,
 ) -> DialogGraphBuildResult:
     """Build a TKG GraphUpsertRequest for a dialogue session (pure, no I/O).
 
@@ -761,8 +762,12 @@ def build_dialog_graph_upsert_v1(
                 continue
 
             sample_id = str((fact or {}).get("source_sample_id") or (fact or {}).get("sample_id") or "").strip() or str(session_id)
-            logical_id = f"fact:{sample_id}:{int(fact_idx)}"
-            fact_id = generate_uuid("locomo.facts", logical_id)
+            fact_id = build_fact_uuid(
+                sample_id=sample_id,
+                fact_idx=int(fact_idx),
+                tenant_id=str(tenant_id),
+                namespace_by_tenant=bool(tenant_scoped_fact_ids),
+            )
             try:
                 fact_importance = float((fact or {}).get("importance")) if (fact or {}).get("importance") is not None else None
             except Exception:

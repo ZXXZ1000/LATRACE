@@ -195,10 +195,6 @@ for memory in memories:
 
 ## 🏗️ Architecture
 
-<div align="center">
-<img src="./assets/schema.png" alt="LATRACE Architecture" width="800">
-</div>
-
 ```text
 ┌─────────────────────────────────────────────────────────┐
 │                     LATRACE Memory API                   │

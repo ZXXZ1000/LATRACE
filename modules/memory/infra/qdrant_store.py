@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Tuple, Optional
 import asyncio
 import concurrent.futures
 import httpx
@@ -59,6 +59,29 @@ class QdrantStore:
         self._http_timeout_s = float(transport_cfg.get("timeout_seconds") or 15.0)
         self._http_max_connections = int(transport_cfg.get("max_connections") or 128)
         self._http_max_keepalive_connections = int(transport_cfg.get("max_keepalive_connections") or 32)
+        sharding_cfg = self.settings.get("sharding") or {}
+        if not isinstance(sharding_cfg, dict):
+            sharding_cfg = {}
+        self._tenant_sharding_enabled = bool(sharding_cfg.get("enabled", False))
+        self._tenant_sharding_key_field = str(sharding_cfg.get("key_field") or "tenant_id").strip() or "tenant_id"
+        self._tenant_sharding_method = str(sharding_cfg.get("method") or "custom").strip().lower() or "custom"
+        try:
+            self._tenant_sharding_shard_number = int(sharding_cfg.get("shard_number") or 1)
+        except Exception:
+            self._tenant_sharding_shard_number = 1
+        try:
+            self._tenant_sharding_replication_factor = int(sharding_cfg.get("replication_factor") or 1)
+        except Exception:
+            self._tenant_sharding_replication_factor = 1
+        try:
+            self._tenant_sharding_write_consistency_factor = int(
+                sharding_cfg.get("write_consistency_factor") or 1
+            )
+        except Exception:
+            self._tenant_sharding_write_consistency_factor = 1
+        self._tenant_sharding_namespace_ids_by_tenant = bool(sharding_cfg.get("namespace_ids_by_tenant", False))
+        self._known_shard_keys: set[Tuple[str, str]] = set()
+        self._known_shard_keys_lock = threading.Lock()
         # Build embedding functions (text + multi-modal slots)
         emb_cfg = self.settings.get("embedding", {}) or {}
         # Validate embedding/collections coherence (fail-fast for explicit dims)
@@ -375,10 +398,90 @@ class QdrantStore:
             out["must_not"] = must_not
         return out or None
 
+    def tenant_sharding_enabled(self) -> bool:
+        return bool(self._tenant_sharding_enabled)
+
+    def tenant_scoped_ids_enabled(self) -> bool:
+        return bool(self._tenant_sharding_enabled and self._tenant_sharding_namespace_ids_by_tenant)
+
+    def _normalize_shard_key(self, value: Any) -> str | None:
+        raw = str(value or "").strip()
+        return raw or None
+
+    def _resolve_shard_key_from_filters(self, filters: Dict[str, Any] | None) -> str | None:
+        if not self._tenant_sharding_enabled:
+            return None
+        if not isinstance(filters, dict):
+            return None
+        return self._normalize_shard_key(filters.get(self._tenant_sharding_key_field))
+
+    def _resolve_shard_key_from_entry(self, entry: MemoryEntry) -> str | None:
+        if not self._tenant_sharding_enabled:
+            return None
+        try:
+            meta = entry.metadata or {}
+        except Exception:
+            meta = {}
+        return self._normalize_shard_key(meta.get(self._tenant_sharding_key_field))
+
+    def _with_shard_key(self, payload: Dict[str, Any], shard_key: str | None) -> Dict[str, Any]:
+        if shard_key is None:
+            return payload
+        body = dict(payload)
+        body["shard_key"] = shard_key
+        return body
+
+    def _tenant_from_qdrant_filter(self, filters: Dict[str, Any] | None) -> str | None:
+        if not self._tenant_sharding_enabled:
+            return None
+        if not isinstance(filters, dict):
+            return None
+        must = filters.get("must")
+        if not isinstance(must, list):
+            return None
+        key_name = f"metadata.{self._tenant_sharding_key_field}"
+        for clause in must:
+            if not isinstance(clause, dict):
+                continue
+            if str(clause.get("key") or "").strip() != key_name:
+                continue
+            match = clause.get("match")
+            if not isinstance(match, dict):
+                continue
+            shard_key = self._normalize_shard_key(match.get("value"))
+            if shard_key:
+                return shard_key
+        return None
+
+    async def _ensure_custom_shard(self, collection: str, shard_key: str | None) -> None:
+        if not self._tenant_sharding_enabled or self._tenant_sharding_method != "custom":
+            return
+        shard = self._normalize_shard_key(shard_key)
+        coll = str(collection or "").strip()
+        if not coll or not shard:
+            return
+        cache_key = (coll, shard)
+        with self._known_shard_keys_lock:
+            if cache_key in self._known_shard_keys:
+                return
+        url = f"{self.base}/collections/{coll}/shards"
+        resp = await self._request("PUT", url, json={"shard_key": shard}, timeout=10)
+        status = int(getattr(resp, "status_code", 500))
+        if status >= 400 and status != 409:
+            body = str(getattr(resp, "text", "") or "")[:500]
+            lowered = body.lower()
+            if "already exists" not in lowered and "exists" not in lowered:
+                raise RuntimeError(
+                    f"qdrant_create_shard_failed: collection={coll} shard_key={shard} status={status} body={body}"
+                )
+        with self._known_shard_keys_lock:
+            self._known_shard_keys.add(cache_key)
+
 
     async def upsert_vectors(self, entries: List[MemoryEntry]) -> None:
-        # Buckets accept multiple modality-target collections, including extended ones
-        buckets: Dict[str, List[Dict[str, Any]]] = {"text": [], "image": [], "audio": [], "clip_image": [], "face": []}
+        # Buckets accept multiple modality-target collections, including extended ones.
+        # When tenant sharding is enabled, split each modality bucket by shard key.
+        buckets: Dict[Tuple[str, Optional[str]], List[Dict[str, Any]]] = {}
         # helper: expected dims per modality
         emb_cfg = self.settings.get("embedding", {}) or {}
         exp_dims = {
@@ -438,6 +541,11 @@ class QdrantStore:
         for i, e in enumerate(entries):
             if not e.contents:
                 continue
+            shard_key = self._resolve_shard_key_from_entry(e)
+            if self._tenant_sharding_enabled and shard_key is None:
+                raise RuntimeError(
+                    f"qdrant_shard_key_missing: field={self._tenant_sharding_key_field} id={e.id} modality={e.modality}"
+                )
             # Observe payload size per entry (helps monitor large contents like base64 images)
             try:
                 observe_payload_items(e.modality, len(e.contents or []))
@@ -482,7 +590,7 @@ class QdrantStore:
                 except Exception:
                     pass
                 _assert_dim("text", vec, e)
-                buckets["text"].append({"id": pid, "vector": vec, "payload": payload})
+                buckets.setdefault(("text", shard_key), []).append({"id": pid, "vector": vec, "payload": payload})
             elif e.modality == "image":
                 # Support multiple vector spaces from a single image entry:
                 # - face: identity vector (insightface)
@@ -496,7 +604,7 @@ class QdrantStore:
                     except Exception:
                         pass
                     _assert_dim("face", vec_face, e)
-                    buckets["face"].append({"id": pid, "vector": vec_face, "payload": payload})
+                    buckets.setdefault(("face", shard_key), []).append({"id": pid, "vector": vec_face, "payload": payload})
                 # 2) clip_image vector
                 vec_ci = None
                 if e.vectors and isinstance(e.vectors.get("clip_image"), list):
@@ -513,7 +621,7 @@ class QdrantStore:
                     except Exception:
                         pass
                     _assert_dim("clip_image", vec_ci, e)
-                    buckets["clip_image"].append({"id": pid, "vector": vec_ci, "payload": payload})
+                    buckets.setdefault(("clip_image", shard_key), []).append({"id": pid, "vector": vec_ci, "payload": payload})
                 # 3) legacy image vector
                 if e.vectors and isinstance(e.vectors.get("image"), list):
                     vec_img = e.vectors.get("image")  # type: ignore[assignment]
@@ -522,7 +630,7 @@ class QdrantStore:
                     except Exception:
                         pass
                     _assert_dim("image", vec_img, e)
-                    buckets["image"].append({"id": pid, "vector": vec_img, "payload": payload})
+                    buckets.setdefault(("image", shard_key), []).append({"id": pid, "vector": vec_img, "payload": payload})
             elif e.modality == "audio":
                 vec = None
                 if e.vectors and isinstance(e.vectors.get("audio"), list):
@@ -534,23 +642,25 @@ class QdrantStore:
                 except Exception:
                     pass
                 _assert_dim("audio", vec, e)
-                buckets["audio"].append({"id": pid, "vector": vec, "payload": payload})
+                buckets.setdefault(("audio", shard_key), []).append({"id": pid, "vector": vec, "payload": payload})
             else:
                 # structured/no-vector; skip vector upsert
                 continue
-        # flush each non-empty bucket (chunked to reduce backend pressure)
-        for kind, pts in buckets.items():
+
+        async def _flush_bucket(kind: str, shard_key: str | None, pts: List[Dict[str, Any]]) -> None:
             if not pts:
-                continue
+                return
             coll = self.collections.get(kind)
             if not coll:
-                continue
+                return
+            await self._ensure_custom_shard(coll, shard_key)
             wait_qs = "?wait=true" if getattr(self, "_upsert_wait", True) else ""
             url = f"{self.base}/collections/{coll}/points{wait_qs}"
             chunk_size = 512
             for i in range(0, len(pts), chunk_size):
                 chunk = pts[i : i + chunk_size]
-                resp = await self._request("PUT", url, json={"points": chunk}, timeout=60)
+                body = self._with_shard_key({"points": chunk}, shard_key)
+                resp = await self._request("PUT", url, json=body, timeout=60)
                 if resp.status_code >= 400:
                     try:
                         self._logger.error(
@@ -564,6 +674,7 @@ class QdrantStore:
                                 "code": resp.status_code,
                                 "collection": coll,
                                 "count": len(chunk),
+                                "shard_key": shard_key,
                             },
                         )
                         import logging as _rootlog
@@ -578,33 +689,44 @@ class QdrantStore:
                                 "code": resp.status_code,
                                 "collection": coll,
                                 "count": len(chunk),
+                                "shard_key": shard_key,
                             },
                         )
                     except Exception:
                         pass
                     import logging as _rootlog
-                    # Log the actual error body from Qdrant for debugging
-                    body = resp.text[:500] if resp.text else ""
-                    _rootlog.error(f"qdrant.upsert.error: collection={coll} status={resp.status_code} body={body}")
-                    print(f"[QDRANT UPSERT ERROR] collection={coll} status={resp.status_code} body={body}")
-                    raise RuntimeError(
-                        f"qdrant_upsert_failed: modality={kind} collection={coll} status={resp.status_code} body={body}"
+                    body_text = resp.text[:500] if resp.text else ""
+                    _rootlog.error(
+                        f"qdrant.upsert.error: collection={coll} status={resp.status_code} shard_key={shard_key} body={body_text}"
                     )
-                # Validate response shape to avoid false positives (e.g., proxy returns HTML with 200).
+                    print(
+                        f"[QDRANT UPSERT ERROR] collection={coll} status={resp.status_code} shard_key={shard_key} body={body_text}"
+                    )
+                    raise RuntimeError(
+                        f"qdrant_upsert_failed: modality={kind} collection={coll} shard_key={shard_key} status={resp.status_code} body={body_text}"
+                    )
                 try:
                     if hasattr(resp, "json"):
                         data = resp.json()
                         st = str((data or {}).get("status") or "").strip().lower() if isinstance(data, dict) else ""
                         if st and st != "ok":
-                            body = resp.text[:500] if getattr(resp, "text", None) else str(data)[:500]
+                            body_text = resp.text[:500] if getattr(resp, "text", None) else str(data)[:500]
                             raise RuntimeError(
-                                f"qdrant_upsert_unexpected_status: modality={kind} collection={coll} status={st} body={body}"
+                                f"qdrant_upsert_unexpected_status: modality={kind} collection={coll} shard_key={shard_key} status={st} body={body_text}"
                             )
                 except Exception as e:
-                    body = resp.text[:500] if getattr(resp, "text", None) else str(e)[:500]
+                    body_text = resp.text[:500] if getattr(resp, "text", None) else str(e)[:500]
                     raise RuntimeError(
-                        f"qdrant_upsert_unexpected_response: modality={kind} collection={coll} body={body}"
+                        f"qdrant_upsert_unexpected_response: modality={kind} collection={coll} shard_key={shard_key} body={body_text}"
                     ) from e
+
+        await asyncio.gather(
+            *[
+                _flush_bucket(kind, shard_key, pts)
+                for (kind, shard_key), pts in buckets.items()
+                if pts
+            ]
+        )
         return None
 
     async def search_vectors(
@@ -664,6 +786,7 @@ class QdrantStore:
             eff_filters["__exclude_sources"] = list(INTERNAL_EXCLUDED_SOURCES)
 
         built_filter = self._build_filter(eff_filters)
+        shard_key = self._resolve_shard_key_from_filters(eff_filters)
 
         # Circuit breaker short-circuit
         import time as _t
@@ -701,6 +824,8 @@ class QdrantStore:
                 payload["score_threshold"] = float(threshold)
             if built_filter:
                 payload["filter"] = built_filter
+            if shard_key is not None:
+                payload["shard_key"] = shard_key
             url = f"{self.base}/collections/{coll}/points/search"
 
             # retry with exponential backoff per modality
@@ -889,6 +1014,7 @@ class QdrantStore:
                 eff_filters["__exclude_sources"] = list(INTERNAL_EXCLUDED_SOURCES)
 
             built_filter = self._build_filter(eff_filters)
+            shard_key = self._resolve_shard_key_from_filters(eff_filters)
             url = f"{self.base}/collections/{coll}/points/scroll"
             page_limit = 128
             next_page = None
@@ -900,6 +1026,8 @@ class QdrantStore:
                 }
                 if built_filter:
                     payload["filter"] = built_filter
+                if shard_key is not None:
+                    payload["shard_key"] = shard_key
                 if next_page is not None:
                     payload["offset"] = next_page
                 r = await self._request("POST", url, json=payload, timeout=10)
@@ -967,7 +1095,7 @@ class QdrantStore:
             cols = self._collection_names()
             for col in cols:
                 url = f"{self.base}/collections/{col}/points/count"
-                payload = {"filter": built_filter, "exact": True}
+                payload = self._with_shard_key({"filter": built_filter, "exact": True}, tid)
                 resp = await self._request("POST", url, json=payload, timeout=5)
                 if resp.status_code >= 400:
                     return None
@@ -996,9 +1124,11 @@ class QdrantStore:
             built_filter = dict(built_filter)
             built_filter["must"] = must
         total = 0
+        shard_key = self._resolve_shard_key_from_filters({"tenant_id": tenant_id})
         for col in self._collection_names():
             url = f"{self.base}/collections/{col}/points/count"
-            resp = await self._request("POST", url, json={"filter": built_filter, "exact": True}, timeout=10)
+            payload = self._with_shard_key({"filter": built_filter, "exact": True}, shard_key)
+            resp = await self._request("POST", url, json=payload, timeout=10)
             if resp.status_code == 404:
                 continue
             if resp.status_code >= 400:
@@ -1018,16 +1148,17 @@ class QdrantStore:
             built_filter["must"] = must
         out: List[str] = []
         seen: set[str] = set()
+        shard_key = self._resolve_shard_key_from_filters({"tenant_id": tenant_id})
         for col in self._collection_names():
             url = f"{self.base}/collections/{col}/points/scroll"
             next_page = None
             while True:
-                payload: Dict[str, Any] = {
+                payload: Dict[str, Any] = self._with_shard_key({
                     "filter": built_filter,
                     "with_payload": False,
                     "with_vector": False,
                     "limit": 256,
-                }
+                }, shard_key)
                 if next_page is not None:
                     payload["offset"] = next_page
                 resp = await self._request("POST", url, json=payload, timeout=10)
@@ -1058,16 +1189,17 @@ class QdrantStore:
             built_filter["must"] = must
         out: List[str] = []
         seen: set[str] = set()
+        shard_key = self._resolve_shard_key_from_filters({"tenant_id": tenant_id})
         for col in self._collection_names():
             url = f"{self.base}/collections/{col}/points/scroll"
             next_page = None
             while True:
-                payload: Dict[str, Any] = {
+                payload: Dict[str, Any] = self._with_shard_key({
                     "filter": built_filter,
                     "with_payload": True,
                     "with_vector": False,
                     "limit": 256,
-                }
+                }, shard_key)
                 if next_page is not None:
                     payload["offset"] = next_page
                 resp = await self._request("POST", url, json=payload, timeout=10)
@@ -1100,9 +1232,11 @@ class QdrantStore:
             built_filter = dict(built_filter)
             built_filter["must"] = must
         total = 0
+        shard_key = self._resolve_shard_key_from_filters({"tenant_id": tenant_id})
         for col in self._collection_names():
             count_url = f"{self.base}/collections/{col}/points/count"
-            count_resp = await self._request("POST", count_url, json={"filter": built_filter, "exact": True}, timeout=10)
+            count_payload = self._with_shard_key({"filter": built_filter, "exact": True}, shard_key)
+            count_resp = await self._request("POST", count_url, json=count_payload, timeout=10)
             if count_resp.status_code == 404:
                 continue
             if count_resp.status_code >= 400:
@@ -1112,7 +1246,8 @@ class QdrantStore:
             if count <= 0:
                 continue
             delete_url = f"{self.base}/collections/{col}/points/delete"
-            delete_resp = await self._request("POST", delete_url, json={"filter": built_filter}, timeout=20)
+            delete_payload = self._with_shard_key({"filter": built_filter}, shard_key)
+            delete_resp = await self._request("POST", delete_url, json=delete_payload, timeout=20)
             if delete_resp.status_code >= 400:
                 raise RuntimeError(f"qdrant_delete_failed:{col}:{delete_resp.status_code}:{delete_resp.text[:200]}")
             total += count
@@ -1155,9 +1290,10 @@ class QdrantStore:
         cols = list(self.collections.values()) if isinstance(self.collections, dict) else []
         if not cols:
             cols = ["memory_text", "memory_image", "memory_audio"]
+        shard_key = self._tenant_from_qdrant_filter(filters)
         for col in cols:
             url = f"{self.base}/collections/{col}/points/payload"
-            body = {"payload": payload, "filter": filters}
+            body = self._with_shard_key({"payload": payload, "filter": filters}, shard_key)
             try:
                 resp = await self._request("POST", url, json=body, timeout=10)
                 if int(getattr(resp, "status_code", 500)) < 400:
@@ -1240,6 +1376,12 @@ class QdrantStore:
         }
 
     def _get_collection_payload_schema_sync(self, coll: str) -> Dict[str, Any]:
+        info = self._get_collection_info_sync(coll)
+        result = info.get("result") if isinstance(info, dict) else None
+        schema = (result or {}).get("payload_schema") if isinstance(result, dict) else None
+        return schema if isinstance(schema, dict) else {}
+
+    def _get_collection_info_sync(self, coll: str) -> Dict[str, Any]:
         url = f"{self.base}/collections/{coll}"
         timeout_s = max(10.0, float(self._http_timeout_s or 15.0))
         try:
@@ -1267,9 +1409,7 @@ class QdrantStore:
                 str(exc)[:200],
             )
             return {}
-        result = data.get("result") if isinstance(data, dict) else None
-        schema = (result or {}).get("payload_schema") if isinstance(result, dict) else None
-        return schema if isinstance(schema, dict) else {}
+        return data if isinstance(data, dict) else {}
 
     def _payload_index_exists(self, payload_schema: Dict[str, Any], field_name: str, field_schema: str) -> bool:
         if not isinstance(payload_schema, dict):
@@ -1295,10 +1435,25 @@ class QdrantStore:
             spec = {
                 "vectors": {"size": int(size), "distance": (distance or "Cosine").capitalize()},
             }
+            if self._tenant_sharding_enabled and self._tenant_sharding_method == "custom":
+                spec["sharding_method"] = "custom"
+                spec["shard_number"] = max(1, int(self._tenant_sharding_shard_number or 1))
+                spec["replication_factor"] = max(1, int(self._tenant_sharding_replication_factor or 1))
+                spec["write_consistency_factor"] = max(
+                    1, int(self._tenant_sharding_write_consistency_factor or 1)
+                )
             r = self._request_sync("PUT", url, json=spec, timeout=10)
             # 200 ok or 409 already exists (qdrant returns 200 for idempotent create)
             if r.status_code >= 400 and r.status_code != 409:
                 raise RuntimeError(f"qdrant create collection {coll} failed: {r.status_code}")
+            if self._tenant_sharding_enabled and self._tenant_sharding_method == "custom":
+                info = self._get_collection_info_sync(coll)
+                params = ((info.get("result") or {}).get("config") or {}).get("params") or {}
+                current_method = str(params.get("sharding_method") or "auto").strip().lower()
+                if current_method != "custom":
+                    raise RuntimeError(
+                        f"qdrant_collection_sharding_mismatch: collection={coll} expected=custom actual={current_method}"
+                    )
 
         def _ensure_payload_indexes(coll: str) -> None:
             field_schemas = self._payload_index_field_schemas()

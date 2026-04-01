@@ -40,6 +40,14 @@
         clip_image: 0.85
     transport:
       use_async_http: false
+    sharding:
+      enabled: false
+      method: custom
+      key_field: tenant_id
+      shard_number: 1
+      replication_factor: 1
+      write_consistency_factor: 1
+      namespace_ids_by_tenant: true
 
   graph_store:
     kind: neo4j

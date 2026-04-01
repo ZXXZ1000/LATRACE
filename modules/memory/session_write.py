@@ -12,6 +12,7 @@ from modules.memory.contracts.graph_models import GraphUpsertRequest
 from modules.memory.application.config import load_memory_config, get_dialog_event_settings, get_graph_settings
 from modules.memory.ports.memory_port import MemoryPort
 from modules.memory.domain.dialog_text_pipeline_v1 import (
+    build_fact_uuid,
     generate_uuid,
     fact_item_to_entry,
 )
@@ -592,6 +593,16 @@ async def session_write(
         trace["turn_marks"] = len(marks_by_id)
     publish_supported = callable(getattr(store, "publish_entries", None))
     trace["publish_supported"] = publish_supported
+    tenant_scoped_fact_ids = False
+    try:
+        cfg = load_memory_config()
+        memory_cfg = cfg.get("memory", {}) or {}
+        vector_cfg = memory_cfg.get("vector_store", {}) or {}
+        shard_cfg = vector_cfg.get("sharding", {}) or {}
+        tenant_scoped_fact_ids = bool(shard_cfg.get("enabled")) and bool(shard_cfg.get("namespace_ids_by_tenant"))
+    except Exception:
+        tenant_scoped_fact_ids = False
+    trace["tenant_scoped_fact_ids"] = bool(tenant_scoped_fact_ids)
 
     # 1) Idempotency check via marker
     marker_filters = _marker_search_filters(
@@ -786,6 +797,7 @@ async def session_write(
                     turn_marks_by_index=marks_by_index if marks_by_index else None,
                     reference_time_iso=reference_time_iso,
                     turn_interval_seconds=int(turn_interval_seconds),
+                    tenant_scoped_fact_ids=bool(tenant_scoped_fact_ids),
                 )
                 if publish_supported:
                     _set_graph_published(tkg_build.request, False)
@@ -850,6 +862,7 @@ async def session_write(
                             turn_marks_by_index=marks_by_index if marks_by_index else None,
                             reference_time_iso=reference_time_iso,
                             turn_interval_seconds=int(turn_interval_seconds),
+                            tenant_scoped_fact_ids=bool(tenant_scoped_fact_ids),
                         )
                         if publish_supported:
                             _set_graph_published(tkg_build.request, False)
@@ -1016,6 +1029,15 @@ async def session_write(
                 )
                 if ent is None or fid is None:
                     continue
+                if tenant_scoped_fact_ids:
+                    scoped_fact_id = build_fact_uuid(
+                        sample_id=str(session_id),
+                        fact_idx=int(i),
+                        tenant_id=str(tenant_id),
+                        namespace_by_tenant=True,
+                    )
+                    ent.id = scoped_fact_id
+                    fid = scoped_fact_id
                 md = dict(ent.metadata or {})
                 md["tenant_id"] = str(tenant_id)
                 md["user_id"] = list(user_tokens_norm)
