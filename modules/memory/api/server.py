@@ -249,6 +249,19 @@ def _as_int(val: Any, default: int) -> int:
         return default
 
 
+def _as_bool(val: Any, default: bool) -> bool:
+    if isinstance(val, bool):
+        return val
+    if val is None:
+        return bool(default)
+    s = str(val).strip().lower()
+    if s in {"1", "true", "yes", "on"}:
+        return True
+    if s in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 def _resolve_env_like_str(val: Any, default: str) -> str:
     try:
         s = str(val).strip()
@@ -391,20 +404,26 @@ def create_service() -> MemoryService:
     n_pass = os.getenv("NEO4J_PASSWORD") or gcfg.get("password", "password")
     n_db = os.getenv("NEO4J_DATABASE") or gcfg.get("database", "neo4j")
     env_strict_tenant_mode = os.getenv("MEMORY_GRAPH_STRICT_TENANT_MODE")
-    strict_tenant_mode = (
+    strict_tenant_mode_raw = (
         env_strict_tenant_mode if env_strict_tenant_mode is not None else gcfg.get("strict_tenant_mode", False)
     )
     env_enable_legacy_memory_node = os.getenv("MEMORY_GRAPH_ENABLE_LEGACY_MEMORY_NODE")
-    enable_legacy_memory_node = (
+    enable_legacy_memory_node_raw = (
         env_enable_legacy_memory_node
         if env_enable_legacy_memory_node is not None
         else gcfg.get("enable_legacy_memory_node", True)
     )
+    strict_tenant_mode = _as_bool(strict_tenant_mode_raw, False)
+    enable_legacy_memory_node = _as_bool(enable_legacy_memory_node_raw, True)
     try:
         import logging
         # Silence verbose neo4j driver logs
         logging.getLogger("neo4j").setLevel(logging.WARNING)
         logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+        if not enable_legacy_memory_node:
+            logging.getLogger(__name__).warning(
+                "graph_store.enable_legacy_memory_node=false: current write/link paths still depend on legacy MemoryNode methods; writes may fail until fully migrated."
+            )
         # Optional debug line, controlled by env MEMORY_GRAPH_DEBUG
         if str(os.getenv("MEMORY_GRAPH_DEBUG", "")).lower() in ("1", "true", "yes"):  # pragma: no cover
             logging.getLogger(__name__).warning(
