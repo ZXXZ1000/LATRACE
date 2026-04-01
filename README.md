@@ -11,10 +11,12 @@
 Read this in [English](README.md) | [中文](README_zh.md)
 
 <p align="center">
-  <a href="https://github.com/yourusername/latrace/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/ZXXZ1000/LATRACE/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-blue.svg" alt="Python"></a>
-  <a href="https://github.com/yourusername/latrace"><img src="https://img.shields.io/badge/Docker-Ready-brightgreen.svg" alt="Docker"></a>
-  <a href="https://github.com/yourusername/latrace/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
+  <a href="https://github.com/ZXXZ1000/LATRACE/actions/workflows/ci.yml"><img src="https://github.com/ZXXZ1000/LATRACE/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ZXXZ1000/LATRACE/releases"><img src="https://img.shields.io/github/v/release/ZXXZ1000/LATRACE?display_name=tag" alt="Release"></a>
+  <a href="https://ghcr.io/zxxz1000/latrace-memory"><img src="https://img.shields.io/badge/GHCR-latrace--memory-2496ED?logo=docker&logoColor=white" alt="GHCR"></a>
+  <a href="https://github.com/ZXXZ1000/LATRACE/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
   <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi" alt="FastAPI"></a>
   <a href="https://pydantic-docs.helpmanual.io/"><img src="https://img.shields.io/badge/Pydantic-e92063?style=flat&logo=pydantic&logoColor=white" alt="Pydantic"></a>
 </p>
@@ -40,6 +42,12 @@ LATRACE is a **production-ready memory service** that gives your AI applications
 - 🔍 **Retrieves** relevant context with hybrid search (vector + graph + BM25)
 - 🎭 **Isolates** data by tenant/user/domain for multi-tenant SaaS
 
+## 🚦 Start Here
+
+- **Self-host in 5 minutes**: Jump to [Quick Start](#quick-start)
+- **Integrate over HTTP**: Read the [API Reference](docs/api_reference.md)
+- **Understand benchmark scope**: Start from the [Benchmark Guide](docs/benchmark_guide.md)
+- **Contribute**: Open the [Contributing Guide](CONTRIBUTING.md)
 
 ## 🎯 Core Features
 
@@ -68,7 +76,7 @@ LATRACE is a **production-ready memory service** that gives your AI applications
 - 🐳 **Docker Ready**: One-command deployment with Docker Compose
 
 
-## 📚 Documentation
+## 📚 Public Docs
 
 - [API Reference](docs/api_reference.md)
 - [ADK Integration Guide](docs/adk_integration.md)
@@ -105,6 +113,8 @@ We recently achieved **State-of-the-Art (SOTA)** performance on both the **LoCoM
 | **KV Cache** | Redis | 🟢 Production Ready |
 
 
+<a id="quick-start"></a>
+
 ## 🚀 Quick Start
 
 ### 📋 Prerequisites
@@ -115,7 +125,7 @@ We recently achieved **State-of-the-Art (SOTA)** performance on both the **LoCoM
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/latrace.git
+git clone https://github.com/ZXXZ1000/LATRACE.git
 cd latrace
 
 # 2. Copy environment template
@@ -147,6 +157,7 @@ This image contains only the application service. Qdrant and Neo4j are not bundl
 - Secret-backed embedding connectivity is skipped by default in open-source CI. Set `REQUIRE_EMBEDDING_CONNECTIVITY=1` together with provider credentials if you want to enforce it.
 - Merges to `main` publish the Docker image to GitHub Container Registry.
 - You can pull the latest image directly with `docker pull ghcr.io/zxxz1000/latrace-memory:latest`.
+- If you use the published image outside this repository, you still need to pull and run compatible Qdrant and Neo4j images yourself, then wire them to the LATRACE service with the right environment variables or compose setup.
 
 ### 💻 Option 2: Local Development
 
@@ -247,35 +258,14 @@ for memory in memories:
 - 🏥 **Healthcare Applications**: Maintain patient interaction history while ensuring strict data isolation and compliance.
 
 
-## 📚 Documentation
+## 📚 More Resources
 
 - 🔗 [API Reference](docs/api_reference.md) - Comprehensive REST API mapping and layers
 - 🤖 [ADK Integration Guide](docs/adk_integration.md) - ADK Runtime for seamless LLM Agent integration (MCP/OpenAI)
-- 🏛️ [Architecture Guide](docs/architecture.md) - System design and components
-- ⚙️ [Configuration](docs/configuration.md) - Environment variables and settings
-- 🚀 [Deployment Guide](docs/deployment.md) - Production deployment best practices
-- 💻 [Development Guide](docs/development.md) - Contributing and local development
-
-
-## 🛠️ Technology Stack
-
-- **API Framework**: FastAPI ⚡
-- **Vector Store**: Qdrant / Milvus 🔍
-- **Graph Database**: Neo4j 🕸️
-- **Relational DB**: PostgreSQL 🗄️
-- **Embeddings**: OpenAI / Local models (sentence-transformers) 🧠
-- **Search**: BM25 + Vector Similarity + Graph Traversal 🎯
-- **Async**: asyncio + asyncpg 🚀
-- **Validation**: Pydantic v2 ✅
-
-
-## 🗺️ Roadmap
-
-- [ ] **v0.2.0**: 🔌 MCP (Model Context Protocol) server support
-- [ ] **v0.3.0**: ⚡ Real-time memory streaming with SSE
-- [ ] **v0.4.0**: 🧠 Advanced graph reasoning with LLM integration
-- [ ] **v0.5.0**: 🌐 Federated memory across distributed deployments
-- [ ] **v1.0.0**: 🛡️ Production hardening and performance optimization
+- 🏢 [Tenant Isolation](docs/tenant_isolation.md) - Isolation model for tenants, users, apps, and sessions
+- 🧪 [Benchmark Guide](docs/benchmark_guide.md) - Public benchmark scope, evaluation path, and publication status
+- 🤝 [Contributing Guide](CONTRIBUTING.md) - Contribution flow, testing expectations, and review norms
+- 🐳 [Docker Compose Stack](docker-compose.yml) - Minimal self-hosted stack for local deployment
 
 
 ## 🤝 Support & Contributing
@@ -294,6 +284,6 @@ LATRACE is licensed under the [Apache License 2.0](LICENSE).
 
 **Built with ❤️ for the AI community**
 
-[⭐ Star us on GitHub](https://github.com/yourusername/latrace) | [📖 Documentation](docs/) | [💬 Discussions](https://github.com/yourusername/latrace/discussions)
+[⭐ Star us on GitHub](https://github.com/ZXXZ1000/LATRACE) | [📖 API Reference](docs/api_reference.md) | [🧪 Benchmark Guide](docs/benchmark_guide.md) | [💬 Discussions](https://github.com/ZXXZ1000/LATRACE/discussions)
 
 </div>
