@@ -3,13 +3,13 @@
 > **Base URL**: `http://<host>:8000`  
 > **Protocol**: HTTP/1.1 REST (JSON)  
 > **Content-Type**: `application/json`  
-> **Tenant Isolation**: When `auth.enabled=false` (development default), all requests MUST carry the `X-Tenant-ID` header. When `auth.enabled=true`, the tenant is parsed from the Token/JWT, but it is still highly recommended to include `X-Tenant-ID` for explicit alignment and debugging.
+> **Tenant Isolation**: When `auth.enabled=false` (development default), memory and graph requests MUST carry the `X-Tenant-ID` header. Public ops endpoints (`/health`, `/metrics`, `/metrics_prom`) are exempt. When `auth.enabled=true`, the tenant is parsed from the Token/JWT, but it is still highly recommended to include `X-Tenant-ID` for explicit alignment and debugging.
 
 This document targets developers integrating with LATRACE Memory. The goal is to provide a comprehensive, runnable, and aligned integration contract, detailing HTTP boundaries, public vs internal endpoints, and data contracts.
 
 **Applicability:**
-- For **SDK Integration**, please review `SDK_GUIDE.md` first (which covers timeouts, retries, and best practices).
-- For **ADK Semantic Tools (Layer 1)**, please review `ADK_Integration_Guide.md` (which covers OpenAPI schemas and agent orchestrations).
+- For **ADK Semantic Tools (Layer 1)**, please review `adk_integration.md` first (which covers tool schemas, runtime wiring, and agent orchestration).
+- For **tenant boundaries and request scoping**, please review `tenant_isolation.md` (which covers `tenant_id`, `user_tokens`, and namespace guidance).
 - This documentation strictly covers **External HTTP Contracts**; internal processes are omitted unless necessary.
 
 ---
@@ -38,7 +38,7 @@ LATRACE Memory is a "**Retrieval-Augmented Memory Service**", segregated into tw
 
 ### 1.2 Minimal Integration Path
 1. **Writing (Recommended: Batch upon session close)**
-   - **High-Level**: `POST /ingest/dialog/v1` (SDK `commit()` uses this; handles semantics automatically).
+   - **High-Level**: `POST /ingest/dialog/v1` (the recommended session-ingest endpoint; handles the ingestion workflow automatically).
    - **Low-Level (Fallback)**: `POST /write` (Store `MemoryEntry` vectors explicitly).
 2. **Retrieving (During Agent Runtime)**
    - **High-Level**: `POST /retrieval/dialog/v2` (Multi-path recall + fusion + optional Synthesis).
@@ -76,8 +76,10 @@ Memory Server (Service Root)
 ├── 🕸️ 3. Graph TKG
 │   ├── POST /graph/v1/search       (Structured Event Target Search)
 │   ├── POST /graph/v0/upsert       (Node Write injection)
-│   ├── GET  /graph/v0/events/{id}  
-│   ├── GET  /graph/v0/entities/{id}
+│   ├── GET  /graph/v0/events/{event_id}
+│   ├── GET  /graph/v0/entities/{entity_id}/timeline
+│   ├── GET  /graph/v0/entities/{entity_id}/evidences
+│   ├── GET  /graph/v0/entities/resolve
 │   └── GET  /graph/v0/explain/*    (Evidence Chain Derivation)
 │
 ├── 🤖 4. Agent SDK Proxies
@@ -105,7 +107,7 @@ Security operates across three tiers: **Tenant Isolation → API Token (JWT) →
 | `Content-Type` | Yes (POST/PATCH) | Strictly `application/json` |
 | `Authorization` | Recommended | `Bearer <token>` |
 | `X-API-Token` | Optional | Fallback format mapping |
-| `X-Tenant-ID` | Dependent | **MANDATORY** if `auth.enabled=false`. If true, server maps by token, but explicit alignment is encouraged. |
+| `X-Tenant-ID` | Dependent | **MANDATORY** for memory and graph routes if `auth.enabled=false`. Public ops routes (`/health`, `/metrics`, `/metrics_prom`) are exempt. If auth is enabled, the server maps by token, but explicit alignment is encouraged. |
 | `X-Request-ID` | Recommended | UUID request tracing tag. |
 
 ### 2.2 Operation Signatures (HMAC-SHA256)
@@ -202,14 +204,16 @@ Standard JSON configuration injected into `filters` mapping blocks.
 ### 5.2 L1: Dialog Ingest (`POST /ingest/dialog/v1`)
 The safest method to process conversations recursively.
 
+With the default self-hosted `.env.example` settings, API auth is disabled and callers must send `X-Tenant-ID`. In that mode, `user_tokens` can be omitted because the server derives a stable user token from the tenant boundary.
+
 | Field | Type | Req | Description |
 | --- | --- | --- | --- |
 | `session_id` | `string` | Yes | Session lock guaranteeing identical message boundaries. |
-| `user_tokens` | `string[]` | Yes | User mappings. |
+| `user_tokens` | `string[]` | No | Optional user mappings; derived from tenant scope when omitted. |
 | `memory_domain` | `string` | No | Partition workspace isolation. |
 | `turns` | `object[]` | Yes | Array of `{turn_id, text/content, role(user/assistant/tool), timestamp_iso}`. |
 | `commit_id` | `string` | No | Idempotent key blocking duplicate parallel execution. |
-| `client_meta` | `object` | No | Dynamic overrides (e.g. `overwrite_existing=true`, custom LLM models). |
+| `client_meta` | `object` | Yes | Must include at least `memory_policy` and `user_id`; can also carry model overrides. |
 
 *Returns:* `{"ok": true, "job_id": "job_123", "status": "RECEIVED"}` (Job queues automatically).
 
@@ -223,9 +227,10 @@ Advanced orchestration for LLM inference (Hybrid Match + Graph Logic).
 | Field | Type | Req | Description |
 | --- | --- | --- | --- |
 | `query` | `string` | Yes | Natural Language user prompt. |
-| `user_tokens` | `string[]` | Yes | |
+| `user_tokens` | `string[]` | No | Optional user mappings; derived from tenant scope when omitted. |
 | `with_answer` | `boolean` | No | Directs server to synthesize an LLM contextual answer array natively. |
 | `topk` | `number` | No | Default `30`. |
+| `client_meta` | `object` | Yes | Must include at least `memory_policy` and `user_id`; can also supply BYOK/provider metadata. |
 
 *Returns Evidence Map:* Containing `tkg_event_id`, `score`, `text`, `_base_score` and optionally `tkg_explain` array chains dictating exactly where memory derivations occurred.
 
