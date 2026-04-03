@@ -6,7 +6,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pytest
+
 from modules.memory.application.knowledge_extractor_dialog_tkg_v1 import build_dialogue_context
+
+_BENCHMARK_ROOT = Path(__file__).resolve().parents[4] / "benchmark"
+pytestmark = pytest.mark.skipif(
+    not _BENCHMARK_ROOT.exists(),
+    reason="benchmark directory not present, skipping alignment tests",
+)
 
 
 def _repo_root() -> Path:

@@ -3,7 +3,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from modules.memory.application.knowledge_extractor_dialog_tkg_v1 import SYSTEM_PROMPT
+
+_BENCHMARK_ROOT = Path(__file__).resolve().parents[4] / "benchmark"
+pytestmark = pytest.mark.skipif(
+    not _BENCHMARK_ROOT.exists(),
+    reason="benchmark directory not present, skipping alignment tests",
+)
 
 
 def _repo_root() -> Path:

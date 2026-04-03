@@ -4,7 +4,15 @@ import asyncio
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[4]
+
+# Skip the entire module when the benchmark directory is not present.
+# The benchmark scripts are not part of the public repository; these alignment
+# tests are only meaningful for contributors who have the full monorepo layout.
+if not (ROOT / "benchmark" / "scripts" / "step3_build_graph.py").exists():
+    pytest.skip("benchmark directory not present, skipping alignment tests", allow_module_level=True)
 
 
 def _load_module(name: str, path: Path):
