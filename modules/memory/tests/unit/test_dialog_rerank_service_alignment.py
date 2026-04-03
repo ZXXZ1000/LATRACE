@@ -5,7 +5,15 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[4]
+
+# Skip the entire module when the benchmark directory is not present.
+# The benchmark scripts are not part of the public repository; these alignment
+# tests are only meaningful for contributors who have the full monorepo layout.
+if not (ROOT / "benchmark" / "shared" / "adapters" / "rerank_types.py").exists():
+    pytest.skip("benchmark directory not present, skipping alignment tests", allow_module_level=True)
 
 
 def _ensure_package(name: str, path: Path) -> None:

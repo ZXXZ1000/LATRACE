@@ -357,10 +357,30 @@ class SimpleCircuitBreaker:
 
 
 def create_service() -> MemoryService:
+    global _usage_wal
     cfg = load_memory_config()
     vcfg = cfg.get("memory", {}).get("vector_store", {})
     gcfg = cfg.get("memory", {}).get("graph_store", {})
     rcfg = cfg.get("memory", {}).get("reliability", {})
+
+    # MEMORY_BACKEND=inmem: use in-memory stores for local development without Docker
+    backend = str(os.getenv("MEMORY_BACKEND", "")).strip().lower()
+    if backend == "inmem":
+        import logging
+        from modules.memory.infra.inmem_vector_store import InMemVectorStore
+        from modules.memory.infra.inmem_graph_store import InMemGraphStore
+        logging.getLogger(__name__).warning(
+            "[LATRACE] MEMORY_BACKEND=inmem: using in-memory stores (data will not persist across restarts)"
+        )
+        vectors: Any = InMemVectorStore()
+        neo: Any = InMemGraphStore()
+        audit = AuditStore()
+        if _usage_wal is None:
+            try:
+                _usage_wal = _init_usage_wal()
+            except Exception:
+                pass
+        return MemoryService(vectors, neo, audit, usage_wal=_usage_wal)
 
     vkind = str(vcfg.get("kind", "qdrant") or "qdrant").strip().lower()
     q_host = os.getenv("QDRANT_HOST") or vcfg.get("host", "127.0.0.1")
@@ -449,15 +469,14 @@ def create_service() -> MemoryService:
     except Exception:
         pass
     audit = AuditStore()
-    
+
     # Initialize usage WAL if not already active (ensure singleton usage)
-    global _usage_wal
     if _usage_wal is None:
         try:
             _usage_wal = _init_usage_wal()
         except Exception:
             pass
-            
+
     return MemoryService(vectors, neo, audit, usage_wal=_usage_wal)
 
 
